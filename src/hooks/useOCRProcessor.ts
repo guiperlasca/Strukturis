@@ -8,20 +8,25 @@ export const useOCRProcessor = () => {
   const [progress, setProgress] = useState(0);
   const [currentDocument, setCurrentDocument] = useState<ProcessedDocument | null>(null);
 
-  const processDocument = async (file: File, selectedPages?: number[]): Promise<ProcessedDocument | null> => {
+  const processDocument = async (
+    file: File,
+    pagesMode: 'all' | 'count' | 'custom',
+    options?: { pagesCount?: number; pagesList?: number[] }
+  ): Promise<ProcessedDocument | null> => {
     try {
       console.log("Starting document processing...", { 
         fileName: file.name, 
         fileSize: file.size, 
-        selectedPages 
+        pagesMode,
+        options 
       });
       
-      // Validate file size (10MB limit for edge function memory constraints)
-      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB in bytes
+      // Validate file size (20MB limit for Document AI)
+      const MAX_FILE_SIZE = 20 * 1024 * 1024;
       if (file.size > MAX_FILE_SIZE) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         const maxSizeMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(0);
-        toast.error(`Arquivo muito grande para processamento: ${fileSizeMB}MB. Limite: ${maxSizeMB}MB. Para arquivos maiores, divida em documentos menores ou reduza a resolução.`);
+        toast.error(`Arquivo muito grande: ${fileSizeMB}MB. Limite: ${maxSizeMB}MB.`);
         return null;
       }
       
@@ -30,7 +35,6 @@ export const useOCRProcessor = () => {
       
       // Get current user
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      console.log("Auth check:", { user: user?.id, error: authError });
       
       if (!user) {
         console.error("User not authenticated");
@@ -38,90 +42,93 @@ export const useOCRProcessor = () => {
         return null;
       }
 
-      const startTime = Date.now();
-
       // Upload to storage
       setProgress(20);
       const filePath = `${user.id}/${Date.now()}_${file.name}`;
       console.log("Uploading to storage:", filePath);
       
-      const { error: uploadError } = await supabase.storage
+      const { error: uploadError, data: uploadData } = await supabase.storage
         .from("documents")
         .upload(filePath, file);
 
       if (uploadError) {
         console.error("Upload error:", uploadError);
-        toast.error(`Erro ao fazer upload do arquivo: ${uploadError.message}`);
+        toast.error(`Erro ao fazer upload: ${uploadError.message}`);
         return null;
       }
+
+      const { data: urlData } = supabase.storage
+        .from("documents")
+        .getPublicUrl(filePath);
 
       console.log("File uploaded successfully");
       setProgress(40);
 
-      // Call OCR processing edge function
-      console.log("Calling OCR edge function...");
-      const { data, error } = await supabase.functions.invoke("ocr-process", {
+      // Get auth token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("Sessão expirada");
+        return null;
+      }
+
+      // Call Document AI processing edge function
+      console.log("Calling process-document function...");
+      setProgress(50);
+
+      const { data, error } = await supabase.functions.invoke("process-document", {
         body: {
-          storagePath: filePath,
-          filename: file.name,
+          fileUrl: urlData.publicUrl,
           mimeType: file.type,
-          fileSize: file.size,
-          userId: user.id,
-          selectedPages,
+          pagesMode,
+          pagesCount: options?.pagesCount,
+          pagesList: options?.pagesList,
+          export: {
+            json: true,
+            csv: true,
+          },
         },
       });
 
       if (error) {
-        console.error("OCR processing error:", error);
+        console.error("Processing error:", error);
         toast.error(`Erro ao processar documento: ${error.message || 'Erro desconhecido'}`);
         return null;
       }
 
-      console.log("OCR processing response:", data);
-      setProgress(80);
-
-      // Fetch complete document data
-      const { data: documentData, error: fetchError } = await supabase
-        .from("ocr_documents")
-        .select(`
-          *,
-          ocr_pages (*)
-        `)
-        .eq("id", data.documentId)
-        .single();
-
-      if (fetchError) {
-        console.error("Error fetching document:", fetchError);
-        toast.error("Erro ao recuperar dados do documento");
-        return null;
-      }
-
-      setProgress(100);
+      console.log("Processing response:", data);
+      setProgress(90);
 
       // Transform to ProcessedDocument format
       const processedDoc: ProcessedDocument = {
         originalFile: file,
-        pages: documentData.ocr_pages.map((page: any) => ({
-          pageNumber: page.page_number,
-          text: page.corrected_text || page.raw_text,
+        pages: data.pages.map((page: any) => ({
+          pageNumber: page.page,
+          text: page.text,
           segments: [{
-            text: page.corrected_text || page.raw_text,
+            text: page.text,
             confidence: page.confidence,
             startIndex: 0,
-            endIndex: (page.corrected_text || page.raw_text).length,
+            endIndex: page.text.length,
           }],
           confidence: page.confidence,
-          hasTable: page.has_table,
-          tableData: page.table_data,
-          language: page.detected_language,
+          hasTable: page.tables.length > 0,
+          tableData: page.tables.length > 0 ? page.tables[0].rows : undefined,
+          language: 'pt-BR',
+          status: page.status,
+          qualityHints: page.qualityHints,
+          tables: page.tables,
+          entities: page.entities,
         })),
-        overallConfidence: documentData.overall_confidence,
-        totalPages: documentData.total_pages,
-        processedAt: new Date(documentData.completed_at),
-        processingTime: documentData.processing_time_ms,
-        detectedLanguage: documentData.detected_language,
+        overallConfidence: data.summary.readabilityConfidence,
+        totalPages: data.pagesProcessed.length,
+        processedAt: new Date(),
+        processingTime: 0,
+        detectedLanguage: 'pt-BR',
+        summary: data.summary,
+        exports: data.exports,
       };
 
+      setProgress(100);
       setCurrentDocument(processedDoc);
       toast.success("Documento processado com sucesso!");
       

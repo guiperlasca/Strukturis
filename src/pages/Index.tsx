@@ -7,6 +7,7 @@ import { SplitView } from "@/components/SplitView";
 import { PageSelector } from "@/components/PageSelector";
 import { ExportOptions } from "@/components/ExportOptions";
 import { ConfidenceReport } from "@/components/ConfidenceReport";
+import { DocumentMetrics } from "@/components/DocumentMetrics";
 import { FeaturesSection } from "@/components/FeaturesSection";
 import { StatsSection } from "@/components/StatsSection";
 import { UseCasesSection } from "@/components/UseCasesSection";
@@ -60,7 +61,7 @@ const Index = () => {
       setProcessedDoc(null);
       
       try {
-        const result = await processDocument(file);
+        const result = await processDocument(file, 'all');
         
         if (result) {
           setProcessedDoc(result);
@@ -79,13 +80,16 @@ const Index = () => {
     }
   };
 
-  const handlePageSelectionConfirm = async (selectedPages: number[]) => {
+  const handlePageSelectionConfirm = async (
+    mode: 'all' | 'count' | 'custom',
+    options?: { pagesCount?: number; pagesList?: number[] }
+  ) => {
     if (!pendingFile) return;
 
     setState("processing");
     setProcessedDoc(null);
 
-    const result = await processDocument(pendingFile, selectedPages);
+    const result = await processDocument(pendingFile, mode, options);
     
     if (result) {
       setProcessedDoc(result);
@@ -245,7 +249,10 @@ const Index = () => {
               {/* Content Area */}
               <div className="flex-1 overflow-auto p-6">
                 {showReport ? (
-                  <ConfidenceReport document={processedDoc} />
+                  <div className="space-y-6">
+                    <DocumentMetrics document={processedDoc} />
+                    <ConfidenceReport document={processedDoc} />
+                  </div>
                 ) : showExport ? (
                   <ExportOptions document={processedDoc} />
                 ) : currentPageData ? (
