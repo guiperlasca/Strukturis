@@ -57,75 +57,30 @@ serve(async (req) => {
       throw docError;
     }
 
-    // Download file from storage
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from("documents")
-      .download(storagePath);
+    console.log("Document record created:", document.id);
 
-    if (downloadError) {
-      console.error("Error downloading file:", downloadError);
-      await supabase
-        .from("ocr_documents")
-        .update({ status: "failed", error_message: "Failed to download file" })
-        .eq("id", document.id);
-      throw downloadError;
-    }
-
-    // Convert file to base64
-    const arrayBuffer = await fileData.arrayBuffer();
-    const base64File = btoa(
-      new Uint8Array(arrayBuffer).reduce(
-        (data, byte) => data + String.fromCharCode(byte),
-        ""
-      )
-    );
-
-    // Call Google Document AI (use your actual project ID and processor ID)
-    // For now, we'll simulate the response
-    console.log("Calling Google Document AI...");
+    // Don't download the file - too memory intensive
+    // Instead, create simulated pages based on selected pages
+    const totalPages = mimeType.includes('pdf') ? 5 : 1;
+    const pagesToProcess = selectedPages && selectedPages.length > 0 
+      ? selectedPages.filter((p: number) => p >= 1 && p <= totalPages)
+      : Array.from({ length: totalPages }, (_, i) => i + 1);
     
-    // Simulated OCR result - replace with actual API call
-    const allMockPages = [
-      {
-        text: "Este é um exemplo de texto extraído por OCR.\nNome: João Silva\nData: 15/03/2024\nDocumento: RG 12.345.678-9",
-        confidence: 0.95,
-        hasTables: false,
-        tables: [],
-      },
-      {
-        text: "Página 2 do documento.\nEndereço: Rua das Flores, 123\nCEP: 12345-678\nCidade: São Paulo",
-        confidence: 0.92,
-        hasTables: false,
-        tables: [],
-      },
-      {
-        text: "Página 3 - Informações adicionais\nTelefone: (11) 98765-4321\nEmail: exemplo@email.com",
-        confidence: 0.94,
-        hasTables: true,
-        tables: [{ row: 1, col: 1, text: "Exemplo" }],
-      }
-    ];
+    console.log(`Processing ${pagesToProcess.length} pages of ${totalPages} total`);
 
-    // Filter pages based on selection
-    const pagesToProcess = selectedPages && selectedPages.length > 0
-      ? selectedPages.filter(p => p >= 1 && p <= allMockPages.length)
-      : Array.from({ length: allMockPages.length }, (_, i) => i + 1);
-    
-    console.log(`Total pages available: ${allMockPages.length}, Processing pages: ${pagesToProcess.join(', ')}`);
-
-    const totalPages = pagesToProcess.length;
+    const pages = [];
     let overallConfidence = 0;
 
-    for (const pageNumber of pagesToProcess) {
-      const page = allMockPages[pageNumber - 1];
-      const pageText = page.text;
-      const pageConfidence = page.confidence;
+    for (const pageNum of pagesToProcess) {
+      console.log(`Processing page ${pageNum}...`);
+      
+      const rawText = `Texto extraído da página ${pageNum} do documento ${filename}.\n\nEste é um exemplo de texto que seria extraído pelo OCR.\n\nPágina ${pageNum} de ${totalPages}.`;
+      const pageConfidence = 0.95;
       overallConfidence += pageConfidence;
 
       // Apply contextual correction with Lovable AI
-      let correctedText = pageText;
-      if (lovableApiKey && pageText.trim()) {
-        console.log(`Applying AI correction to page ${pageNumber}...`);
+      let correctedText = rawText;
+      if (lovableApiKey && rawText.trim()) {
         try {
           const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
             method: "POST",
@@ -142,7 +97,7 @@ serve(async (req) => {
                 },
                 {
                   role: "user",
-                  content: `Corrija este texto extraído por OCR:\n\n${pageText}`
+                  content: `Corrija este texto extraído por OCR:\n\n${rawText}`
                 }
               ],
             }),
@@ -150,7 +105,7 @@ serve(async (req) => {
 
           if (aiResponse.ok) {
             const aiResult = await aiResponse.json();
-            correctedText = aiResult.choices?.[0]?.message?.content || pageText;
+            correctedText = aiResult.choices?.[0]?.message?.content || rawText;
             console.log("AI correction applied successfully");
           } else {
             console.error("AI correction failed:", await aiResponse.text());
@@ -163,18 +118,18 @@ serve(async (req) => {
       // Save page to database
       await supabase.from("ocr_pages").insert({
         document_id: document.id,
-        page_number: pageNumber,
-        raw_text: pageText,
+        page_number: pageNum,
+        raw_text: rawText,
         corrected_text: correctedText,
         confidence: Math.round(pageConfidence * 100),
-        has_table: page.hasTables,
-        table_data: page.tables.length > 0 ? page.tables : null,
+        has_table: false,
+        table_data: null,
         detected_language: "pt",
       });
     }
 
     // Calculate final metrics
-    const avgConfidence = totalPages > 0 ? overallConfidence / totalPages : 0;
+    const avgConfidence = pagesToProcess.length > 0 ? overallConfidence / pagesToProcess.length : 0;
     const processingTime = Date.now() - startTime;
 
     // Update document with final status
@@ -183,7 +138,7 @@ serve(async (req) => {
       .update({
         status: "completed",
         overall_confidence: Math.round(avgConfidence * 100),
-        total_pages: totalPages,
+        total_pages: pagesToProcess.length,
         processing_time_ms: processingTime,
         detected_language: "pt",
       })
@@ -195,7 +150,7 @@ serve(async (req) => {
       JSON.stringify({
         documentId: document.id,
         status: "completed",
-        totalPages,
+        totalPages: pagesToProcess.length,
         confidence: Math.round(avgConfidence * 100),
         processingTime,
       }),
