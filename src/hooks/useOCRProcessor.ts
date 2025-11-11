@@ -16,12 +16,12 @@ export const useOCRProcessor = () => {
         selectedPages 
       });
       
-      // Validate file size (100MB limit)
-      const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB in bytes
+      // Validate file size (10MB limit for edge function memory constraints)
+      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB in bytes
       if (file.size > MAX_FILE_SIZE) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         const maxSizeMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(0);
-        toast.error(`Arquivo muito grande: ${fileSizeMB}MB. Limite: ${maxSizeMB}MB. Tente comprimir o PDF ou dividir em partes menores.`);
+        toast.error(`Arquivo muito grande para processamento: ${fileSizeMB}MB. Limite: ${maxSizeMB}MB. Para arquivos maiores, divida em documentos menores ou reduza a resolução.`);
         return null;
       }
       
