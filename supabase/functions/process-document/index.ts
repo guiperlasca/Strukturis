@@ -89,14 +89,28 @@ serve(async (req) => {
 
     // Get Document AI credentials
     const credentialsJson = Deno.env.get('GOOGLE_APPLICATION_CREDENTIALS_JSON');
-    const projectId = Deno.env.get('DOCAI_PROJECT_ID');
-    const location = Deno.env.get('DOCAI_LOCATION') || 'us';
-    const processorId = Deno.env.get('DOCAI_PROCESSOR_ID');
+    const projectId = Deno.env.get('DOCAI_PROJECT_ID')?.trim();
+    const location = Deno.env.get('DOCAI_LOCATION')?.trim() || 'us';
+    const processorId = Deno.env.get('DOCAI_PROCESSOR_ID')?.trim();
+
+    console.log('Document AI Configuration:', {
+      hasCredentials: !!credentialsJson,
+      projectId,
+      location,
+      processorId,
+    });
 
     if (!credentialsJson || !projectId || !processorId) {
       console.error('Missing Document AI configuration');
       return new Response(
-        JSON.stringify({ error: 'Document AI not configured' }),
+        JSON.stringify({ 
+          error: 'Document AI not configured',
+          details: {
+            hasCredentials: !!credentialsJson,
+            hasProjectId: !!projectId,
+            hasProcessorId: !!processorId,
+          }
+        }),
         { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -183,6 +197,11 @@ serve(async (req) => {
 
     // Call Document AI
     const processorEndpoint = `https://${location}-documentai.googleapis.com/v1/projects/${projectId}/locations/${location}/processors/${processorId}:process`;
+
+    console.log('Calling Document AI:', {
+      endpoint: processorEndpoint,
+      mimeType: mimeType,
+    });
 
     const docAIResponse = await fetch(processorEndpoint, {
       method: 'POST',
