@@ -9,7 +9,8 @@ import {
   FileText,
   TrendingUp,
   Calendar,
-  Languages
+  Languages,
+  Clock
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +57,13 @@ export const ConfidenceReport = ({ document }: ConfidenceReportProps) => {
 
   const tablesDetected = document.pages.filter((p) => p.hasTable).length;
 
+  const formatTime = (ms: number) => {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
+
+  const criticalPages = document.pages.filter((p) => p.confidence < 70);
+
   return (
     <Card className="p-6">
       <div className="mb-6">
@@ -92,7 +100,7 @@ export const ConfidenceReport = ({ document }: ConfidenceReportProps) => {
       </div>
 
       {/* Summary Cards */}
-      <div className="mb-6 grid gap-4 md:grid-cols-4">
+      <div className="mb-6 grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <Card className="bg-secondary/50 p-4">
           <div className="flex items-center gap-3">
             <div className="rounded-lg bg-gradient-primary p-2">
@@ -145,6 +153,20 @@ export const ConfidenceReport = ({ document }: ConfidenceReportProps) => {
               <p className="text-xs text-muted-foreground">Processado em</p>
               <p className="text-xs font-semibold text-foreground">
                 {document.processedAt.toLocaleString("pt-BR")}
+              </p>
+            </div>
+          </div>
+        </Card>
+
+        <Card className="bg-secondary/50 p-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-primary p-2">
+              <Clock className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Tempo de Processamento</p>
+              <p className="font-semibold text-foreground">
+                {formatTime(document.processingTime)}
               </p>
             </div>
           </div>
@@ -225,17 +247,26 @@ export const ConfidenceReport = ({ document }: ConfidenceReportProps) => {
         </div>
       </div>
 
-      {/* Recommendations */}
-      {pageStats.low > 0 && (
+      {/* Critical Pages Alert */}
+      {criticalPages.length > 0 && (
         <div className="mt-6 rounded-lg bg-destructive/10 p-4">
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 flex-shrink-0 text-destructive" />
             <div>
-              <p className="font-semibold text-foreground">Recomendação</p>
-              <p className="text-sm text-muted-foreground">
-                {pageStats.low} página{pageStats.low > 1 ? "s" : ""} com baixa confiabilidade.
-                Recomendamos revisão manual dessas páginas antes da exportação final.
+              <p className="font-semibold text-foreground">
+                ⚠️ {criticalPages.length} Página{criticalPages.length > 1 ? "s" : ""} Crítica{criticalPages.length > 1 ? "s" : ""} Detectada{criticalPages.length > 1 ? "s" : ""}
               </p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {criticalPages.length > 1 ? "Estas páginas apresentam" : "Esta página apresenta"} baixa legibilidade (&lt;70% de confiabilidade).
+                Recomendamos revisão manual e uso da função "Corrigir trecho com IA" antes da exportação final.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {criticalPages.map((page) => (
+                  <Badge key={page.pageNumber} variant="destructive" className="text-xs">
+                    Página {page.pageNumber} ({page.confidence}%)
+                  </Badge>
+                ))}
+              </div>
             </div>
           </div>
         </div>

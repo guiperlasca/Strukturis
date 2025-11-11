@@ -21,6 +21,7 @@ export interface ProcessedDocument {
   overallConfidence: number;
   totalPages: number;
   processedAt: Date;
+  processingTime: number; // in milliseconds
   documentType?: DocumentTypeInfo;
   detectedLanguage?: string;
 }
