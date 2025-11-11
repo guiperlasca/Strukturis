@@ -33,36 +33,36 @@ const Index = () => {
 
   const handleFileSelect = async (file: File) => {
     console.log("File selected:", file.name, file.type, file.size);
-    
+
     // Detect total pages for PDF files
     if (file.type === "application/pdf") {
       try {
         console.log("Processing PDF file...");
         const arrayBuffer = await file.arrayBuffer();
         console.log("ArrayBuffer loaded, size:", arrayBuffer.byteLength);
-        
+
         const uint8Array = new Uint8Array(arrayBuffer);
         const text = new TextDecoder().decode(uint8Array);
         const match = text.match(/\/Type\s*\/Page[^s]/g);
         const pages = match ? match.length : 1;
-        
+
         console.log("Pages detected:", pages);
         setTotalPages(pages);
         setPendingFile(file);
         setState("page-selection");
       } catch (error) {
         console.error("Error detecting pages:", error);
-        toast.error(`Erro ao detectar páginas do PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+        toast.error(`Erro ao detectar páginas do PDF: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
       }
     } else {
       // For images, process directly
       console.log("Processing image file...");
       setState("processing");
       setProcessedDoc(null);
-      
+
       try {
-        const result = await processDocument(file, 'all');
-        
+        const result = await processDocument(file, "all");
+
         if (result) {
           setProcessedDoc(result);
           setState("viewing");
@@ -74,15 +74,15 @@ const Index = () => {
         }
       } catch (error) {
         console.error("Error processing file:", error);
-        toast.error(`Erro ao processar arquivo: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
+        toast.error(`Erro ao processar arquivo: ${error instanceof Error ? error.message : "Erro desconhecido"}`);
         setState("landing");
       }
     }
   };
 
   const handlePageSelectionConfirm = async (
-    mode: 'all' | 'count' | 'custom',
-    options?: { pagesCount?: number; pagesList?: number[] }
+    mode: "all" | "count" | "custom",
+    options?: { pagesCount?: number; pagesList?: number[] },
   ) => {
     if (!pendingFile) return;
 
@@ -90,7 +90,7 @@ const Index = () => {
     setProcessedDoc(null);
 
     const result = await processDocument(pendingFile, mode, options);
-    
+
     if (result) {
       setProcessedDoc(result);
       setState("viewing");
@@ -99,7 +99,7 @@ const Index = () => {
     } else {
       setState("landing");
     }
-    
+
     setPendingFile(null);
   };
 
@@ -112,9 +112,7 @@ const Index = () => {
   const handlePageTextChange = (pageNumber: number, newText: string) => {
     if (!processedDoc) return;
 
-    const updatedPages = processedDoc.pages.map((p) =>
-      p.pageNumber === pageNumber ? { ...p, text: newText } : p
-    );
+    const updatedPages = processedDoc.pages.map((p) => (p.pageNumber === pageNumber ? { ...p, text: newText } : p));
 
     setProcessedDoc({
       ...processedDoc,
@@ -134,9 +132,7 @@ const Index = () => {
     setShowExport(false);
   };
 
-  const currentPageData = processedDoc?.pages.find(
-    (p) => p.pageNumber === selectedPageNumber
-  );
+  const currentPageData = processedDoc?.pages.find((p) => p.pageNumber === selectedPageNumber);
 
   return (
     <div className="min-h-screen bg-background">
@@ -147,12 +143,10 @@ const Index = () => {
         <main className="container mx-auto px-4 py-12">
           <div className="mx-auto max-w-7xl">
             <div className="mb-12 text-center">
-              <h2 className="mb-4 text-4xl font-bold text-foreground">
-                Automatize a Transcrição de Documentos
-              </h2>
+              <h2 className="mb-4 text-4xl font-bold text-foreground">Automatize a Transcrição de Documentos</h2>
               <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
-                Elimine a transcrição manual de PDFs digitalizados. Solução profissional
-                para escritórios jurídicos, RH, contabilidade e empresas.
+                Elimine a transcrição manual de PDFs digitalizados. Solução profissional para escritórios jurídicos, RH,
+                contabilidade e empresas.
               </p>
             </div>
 
@@ -207,13 +201,10 @@ const Index = () => {
                 <div className="flex items-center gap-4">
                   <SidebarTrigger />
                   <div>
-                    <h1 className="text-lg font-semibold text-foreground">
-                      {processedDoc.originalFile.name}
-                    </h1>
+                    <h1 className="text-lg font-semibold text-foreground">{processedDoc.originalFile.name}</h1>
                     <p className="text-sm text-muted-foreground">
-                      {processedDoc.documentType?.icon} {processedDoc.documentType?.label} •{" "}
-                      {processedDoc.totalPages} página{processedDoc.totalPages > 1 ? "s" : ""} •{" "}
-                      {processedDoc.overallConfidence}% confiabilidade
+                      {processedDoc.documentType?.icon} {processedDoc.documentType?.label} • {processedDoc.totalPages}{" "}
+                      página{processedDoc.totalPages > 1 ? "s" : ""} • {processedDoc.overallConfidence}% confiabilidade
                     </p>
                   </div>
                 </div>
@@ -258,9 +249,7 @@ const Index = () => {
                 ) : currentPageData ? (
                   <SplitView
                     page={currentPageData}
-                    onTextChange={(text) =>
-                      handlePageTextChange(selectedPageNumber, text)
-                    }
+                    onTextChange={(text) => handlePageTextChange(selectedPageNumber, text)}
                     onSave={handleSavePage}
                   />
                 ) : (
@@ -276,9 +265,7 @@ const Index = () => {
 
       <footer className="border-t border-border py-8">
         <div className="container mx-auto px-4 text-center">
-          <p className="text-sm text-muted-foreground">
-            Strukturis - OCR Avançado com Inteligência Artificial
-          </p>
+          <p className="text-sm text-muted-foreground">Strukturis - OCR Avançado com Inteligência Artificial</p>
         </div>
       </footer>
     </div>
