@@ -14,6 +14,115 @@ export type Database = {
   }
   public: {
     Tables: {
+      document_exports: {
+        Row: {
+          created_at: string
+          csv_url: string | null
+          document_id: string
+          id: string
+          json_url: string | null
+        }
+        Insert: {
+          created_at?: string
+          csv_url?: string | null
+          document_id: string
+          id?: string
+          json_url?: string | null
+        }
+        Update: {
+          created_at?: string
+          csv_url?: string | null
+          document_id?: string
+          id?: string
+          json_url?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_exports_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      document_pages: {
+        Row: {
+          confidence: number | null
+          created_at: string
+          document_id: string
+          entities: Json | null
+          id: string
+          page: number
+          quality_hints: Json | null
+          status: string
+          tables: Json | null
+          text: string | null
+        }
+        Insert: {
+          confidence?: number | null
+          created_at?: string
+          document_id: string
+          entities?: Json | null
+          id?: string
+          page: number
+          quality_hints?: Json | null
+          status: string
+          tables?: Json | null
+          text?: string | null
+        }
+        Update: {
+          confidence?: number | null
+          created_at?: string
+          document_id?: string
+          entities?: Json | null
+          id?: string
+          page?: number
+          quality_hints?: Json | null
+          status?: string
+          tables?: Json | null
+          text?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "document_pages_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      documents: {
+        Row: {
+          created_at: string
+          id: string
+          mime_type: string
+          original_url: string
+          status: string
+          total_pages: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          mime_type: string
+          original_url: string
+          status?: string
+          total_pages?: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          mime_type?: string
+          original_url?: string
+          status?: string
+          total_pages?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
       ocr_documents: {
         Row: {
           completed_at: string | null

@@ -65,5 +65,8 @@ verify_jwt = false
 [functions.ocr-status]
 verify_jwt = false
 
+[functions.process-document]
+verify_jwt = false
+
 [edge_runtime]
 policy = "per_worker"

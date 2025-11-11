@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface PageSelectorProps {
   totalPages: number;
-  onConfirm: (selectedPages: number[]) => void;
+  onConfirm: (mode: 'all' | 'count' | 'custom', options?: { pagesCount?: number; pagesList?: number[] }) => void;
   onCancel: () => void;
 }
 
@@ -73,11 +73,13 @@ export const PageSelector = ({ totalPages, onConfirm, onCancel }: PageSelectorPr
   };
 
   const handleConfirm = () => {
-    if (selectedPages.length === 0) {
-      setError("Selecione as páginas antes de confirmar");
-      return;
+    if (selectionMode === 'all') {
+      onConfirm('all');
+    } else if (selectionMode === 'first-n') {
+      onConfirm('count', { pagesCount: parseInt(firstNPages) });
+    } else if (selectionMode === 'manual' && selectedPages.length > 0) {
+      onConfirm('custom', { pagesList: selectedPages });
     }
-    onConfirm(selectedPages);
   };
 
   return (

@@ -13,6 +13,18 @@ export interface PageResult {
   hasTable: boolean;
   tableData?: string[][];
   language?: string;
+  status?: 'ok' | 'low_quality' | 'error';
+  qualityHints?: string[];
+  tables?: Array<{
+    name: string;
+    confidence: number;
+    rows: string[][];
+  }>;
+  entities?: Array<{
+    field: string;
+    value: string;
+    confidence: number;
+  }>;
 }
 
 export interface ProcessedDocument {
@@ -24,6 +36,16 @@ export interface ProcessedDocument {
   processingTime: number; // in milliseconds
   documentType?: DocumentTypeInfo;
   detectedLanguage?: string;
+  summary?: {
+    readabilityConfidence: number;
+    pageSuccessRate: number;
+    tablesDetected: number;
+    fieldsDetected: number;
+  };
+  exports?: {
+    jsonUrl?: string;
+    csvUrl?: string;
+  };
 }
 
 export type ProcessStep = 
