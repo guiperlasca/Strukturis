@@ -25,10 +25,9 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const googleApiKey = Deno.env.get("GOOGLE_CLOUD_API_KEY");
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-    const googleCredentialsJson = Deno.env.get("GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
-    if (!googleCredentialsJson) {
-      throw new Error("GOOGLE_APPLICATION_CREDENTIALS_JSON not configured");
+    if (!googleApiKey) {
+      throw new Error("GOOGLE_CLOUD_API_KEY not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -60,91 +59,46 @@ serve(async (req) => {
 
     console.log("Document record created:", document.id);
 
-    // Get signed URL for Google Cloud Vision API access
-    const { data: urlData } = await supabase.storage
+    // Get file from storage and convert to base64
+    const { data: fileData, error: downloadError } = await supabase.storage
       .from("documents")
-      .createSignedUrl(storagePath, 3600); // 1 hour expiry
+      .download(storagePath);
 
-    if (!urlData?.signedUrl) {
-      throw new Error("Failed to create signed URL for document");
+    if (downloadError || !fileData) {
+      console.error("Error downloading file:", downloadError);
+      await supabase
+        .from("ocr_documents")
+        .update({ status: "failed", error_message: "Failed to download file" })
+        .eq("id", document.id);
+      throw new Error("Failed to download file from storage");
     }
 
-    console.log("Signed URL created for document access");
+    console.log("File downloaded successfully, size:", fileData.size);
 
-    // Use Google Cloud Vision API for OCR
-    // First, get OAuth token from service account credentials
-    const credentials = JSON.parse(googleCredentialsJson);
-    
-    // Create JWT for Google OAuth
-    const header = {
-      alg: "RS256",
-      typ: "JWT",
-      kid: credentials.private_key_id,
-    };
-
-    const now = Math.floor(Date.now() / 1000);
-    const payload = {
-      iss: credentials.client_email,
-      scope: "https://www.googleapis.com/auth/cloud-platform",
-      aud: "https://oauth2.googleapis.com/token",
-      exp: now + 3600,
-      iat: now,
-    };
-
-    // Import private key and sign
-    const encoder = new TextEncoder();
-    const keyData = credentials.private_key.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, "");
-    const binaryKey = Uint8Array.from(atob(keyData), c => c.charCodeAt(0));
-    
-    const cryptoKey = await crypto.subtle.importKey(
-      "pkcs8",
-      binaryKey,
-      {
-        name: "RSASSA-PKCS1-v1_5",
-        hash: "SHA-256",
-      },
-      false,
-      ["sign"]
+    // Convert to base64 for Google Vision API
+    const arrayBuffer = await fileData.arrayBuffer();
+    const base64Content = btoa(
+      String.fromCharCode(...new Uint8Array(arrayBuffer))
     );
 
-    const dataToSign = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
-    const signature = await crypto.subtle.sign(
-      "RSASSA-PKCS1-v1_5",
-      cryptoKey,
-      encoder.encode(dataToSign)
-    );
-
-    const jwt = `${dataToSign}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
-
-    // Exchange JWT for access token
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-    });
-
-    const tokenData = await tokenResponse.json();
-    const accessToken = tokenData.access_token;
-
-    console.log("Google OAuth token obtained");
+    console.log("File converted to base64");
 
     // Determine pages to process
     let pagesToProcess: number[] = [];
     
     if (mimeType.includes('pdf')) {
-      // For PDFs, use selected pages or default to first 5
-      const maxPages = 5; // Limit for demo
+      // For PDFs, use selected pages or default to first 3
+      const maxPages = 3; // Reduced to avoid memory issues
       pagesToProcess = selectedPages && selectedPages.length > 0 
         ? selectedPages.slice(0, maxPages)
-        : [1, 2, 3, 4, 5];
+        : [1, 2, 3];
     } else {
       // For images, just one page
       pagesToProcess = [1];
     }
     
-    console.log(`Will process pages: ${pagesToProcess.join(', ')}`);
+    console.log(`Will process ${pagesToProcess.length} page(s): ${pagesToProcess.join(', ')}`);
 
-    const pages = [];
     let overallConfidence = 0;
 
     for (const pageNum of pagesToProcess) {
@@ -152,23 +106,19 @@ serve(async (req) => {
       
       // Call Google Cloud Vision API for text detection
       const visionResponse = await fetch(
-        `https://vision.googleapis.com/v1/images:annotate`,
+        `https://vision.googleapis.com/v1/images:annotate?key=${googleApiKey}`,
         {
           method: "POST",
           headers: {
-            "Authorization": `Bearer ${accessToken}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
             requests: [{
               image: {
-                source: {
-                  imageUri: urlData.signedUrl,
-                },
+                content: base64Content,
               },
               features: [{
                 type: "DOCUMENT_TEXT_DETECTION",
-                maxResults: 1,
               }],
             }],
           }),
@@ -176,30 +126,52 @@ serve(async (req) => {
       );
 
       if (!visionResponse.ok) {
-        console.error("Vision API error:", await visionResponse.text());
+        const errorText = await visionResponse.text();
+        console.error("Vision API error:", errorText);
+        
+        // Mark as failed and continue
+        await supabase
+          .from("ocr_documents")
+          .update({ 
+            status: "failed", 
+            error_message: `Google Vision API error: ${errorText.substring(0, 200)}` 
+          })
+          .eq("id", document.id);
+        
         throw new Error("Failed to process document with Google Vision API");
       }
 
       const visionData = await visionResponse.json();
-      const textAnnotations = visionData.responses?.[0]?.textAnnotations;
+      console.log("Vision API response received");
+      
+      const textAnnotations = visionData.responses?.[0]?.fullTextAnnotation;
       
       let rawText = "";
-      let confidence = 0;
+      let confidence = 0.9;
 
-      if (textAnnotations && textAnnotations.length > 0) {
-        rawText = textAnnotations[0].description || "";
-        // Calculate average confidence from all text annotations
-        const confidenceValues = textAnnotations
-          .slice(1) // Skip first which is full text
-          .map((a: any) => a.confidence || 0.9)
-          .filter((c: number) => c > 0);
+      if (textAnnotations) {
+        rawText = textAnnotations.text || "";
         
-        confidence = confidenceValues.length > 0
-          ? confidenceValues.reduce((sum: number, c: number) => sum + c, 0) / confidenceValues.length
-          : 0.9;
+        // Calculate average confidence from pages
+        if (textAnnotations.pages && textAnnotations.pages.length > 0) {
+          const confidenceValues = textAnnotations.pages
+            .flatMap((p: any) => p.blocks || [])
+            .flatMap((b: any) => b.paragraphs || [])
+            .map((p: any) => p.confidence || 0.9)
+            .filter((c: number) => c > 0);
+          
+          if (confidenceValues.length > 0) {
+            confidence = confidenceValues.reduce((sum: number, c: number) => sum + c, 0) / confidenceValues.length;
+          }
+        }
       }
 
-      console.log(`Page ${pageNum} extracted, confidence: ${confidence}, text length: ${rawText.length}`);
+      console.log(`Page ${pageNum} extracted, confidence: ${(confidence * 100).toFixed(1)}%, text length: ${rawText.length}`);
+      
+      if (!rawText || rawText.trim().length === 0) {
+        console.warn(`Page ${pageNum} has no text content`);
+        rawText = `[Página ${pageNum} sem texto detectado]`;
+      }
       
       const pageConfidence = confidence;
       overallConfidence += pageConfidence;
