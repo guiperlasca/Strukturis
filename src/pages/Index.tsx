@@ -31,33 +31,49 @@ const Index = () => {
   const { processDocument, isProcessing, progress } = useOCRProcessor();
 
   const handleFileSelect = async (file: File) => {
+    console.log("File selected:", file.name, file.type, file.size);
+    
     // Detect total pages for PDF files
     if (file.type === "application/pdf") {
       try {
+        console.log("Processing PDF file...");
         const arrayBuffer = await file.arrayBuffer();
+        console.log("ArrayBuffer loaded, size:", arrayBuffer.byteLength);
+        
         const uint8Array = new Uint8Array(arrayBuffer);
         const text = new TextDecoder().decode(uint8Array);
         const match = text.match(/\/Type\s*\/Page[^s]/g);
         const pages = match ? match.length : 1;
         
+        console.log("Pages detected:", pages);
         setTotalPages(pages);
         setPendingFile(file);
         setState("page-selection");
       } catch (error) {
         console.error("Error detecting pages:", error);
-        toast.error("Erro ao detectar páginas do PDF");
+        toast.error(`Erro ao detectar páginas do PDF: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
       }
     } else {
       // For images, process directly
+      console.log("Processing image file...");
       setState("processing");
       setProcessedDoc(null);
-      const result = await processDocument(file);
       
-      if (result) {
-        setProcessedDoc(result);
-        setState("viewing");
-        setSelectedPageNumber(1);
-      } else {
+      try {
+        const result = await processDocument(file);
+        
+        if (result) {
+          setProcessedDoc(result);
+          setState("viewing");
+          setSelectedPageNumber(1);
+          console.log("Document processed successfully");
+        } else {
+          setState("landing");
+          console.log("Processing returned null");
+        }
+      } catch (error) {
+        console.error("Error processing file:", error);
+        toast.error(`Erro ao processar arquivo: ${error instanceof Error ? error.message : 'Erro desconhecido'}`);
         setState("landing");
       }
     }

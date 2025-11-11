@@ -10,12 +10,21 @@ export const useOCRProcessor = () => {
 
   const processDocument = async (file: File, selectedPages?: number[]): Promise<ProcessedDocument | null> => {
     try {
+      console.log("Starting document processing...", { 
+        fileName: file.name, 
+        fileSize: file.size, 
+        selectedPages 
+      });
+      
       setIsProcessing(true);
       setProgress(10);
       
       // Get current user
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      console.log("Auth check:", { user: user?.id, error: authError });
+      
       if (!user) {
+        console.error("User not authenticated");
         toast.error("Você precisa estar autenticado para processar documentos");
         return null;
       }
@@ -25,19 +34,23 @@ export const useOCRProcessor = () => {
       // Upload to storage
       setProgress(20);
       const filePath = `${user.id}/${Date.now()}_${file.name}`;
+      console.log("Uploading to storage:", filePath);
+      
       const { error: uploadError } = await supabase.storage
         .from("documents")
         .upload(filePath, file);
 
       if (uploadError) {
         console.error("Upload error:", uploadError);
-        toast.error("Erro ao fazer upload do arquivo");
+        toast.error(`Erro ao fazer upload do arquivo: ${uploadError.message}`);
         return null;
       }
 
+      console.log("File uploaded successfully");
       setProgress(40);
 
       // Call OCR processing edge function
+      console.log("Calling OCR edge function...");
       const { data, error } = await supabase.functions.invoke("ocr-process", {
         body: {
           storagePath: filePath,
@@ -51,10 +64,11 @@ export const useOCRProcessor = () => {
 
       if (error) {
         console.error("OCR processing error:", error);
-        toast.error("Erro ao processar documento");
+        toast.error(`Erro ao processar documento: ${error.message || 'Erro desconhecido'}`);
         return null;
       }
 
+      console.log("OCR processing response:", data);
       setProgress(80);
 
       // Fetch complete document data
