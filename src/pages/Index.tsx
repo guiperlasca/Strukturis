@@ -4,6 +4,7 @@ import { FileUpload } from "@/components/FileUpload";
 import { ProcessingStatus } from "@/components/ProcessingStatus";
 import { DocumentSidebar } from "@/components/DocumentSidebar";
 import { SplitView } from "@/components/SplitView";
+import { PageSelector } from "@/components/PageSelector";
 import { ExportOptions } from "@/components/ExportOptions";
 import { ConfidenceReport } from "@/components/ConfidenceReport";
 import { FeaturesSection } from "@/components/FeaturesSection";
@@ -16,7 +17,7 @@ import { ProcessedDocument } from "@/types/document";
 import { toast } from "sonner";
 import { RotateCcw, Download } from "lucide-react";
 
-type AppState = "landing" | "processing" | "viewing";
+type AppState = "landing" | "page-selection" | "processing" | "viewing";
 
 const Index = () => {
   const [state, setState] = useState<AppState>("landing");
@@ -24,14 +25,51 @@ const Index = () => {
   const [selectedPageNumber, setSelectedPageNumber] = useState(1);
   const [showReport, setShowReport] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [totalPages, setTotalPages] = useState(0);
 
   const { processDocument, isProcessing, progress } = useOCRProcessor();
 
   const handleFileSelect = async (file: File) => {
+    // Detect total pages for PDF files
+    if (file.type === "application/pdf") {
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        const text = new TextDecoder().decode(uint8Array);
+        const match = text.match(/\/Type\s*\/Page[^s]/g);
+        const pages = match ? match.length : 1;
+        
+        setTotalPages(pages);
+        setPendingFile(file);
+        setState("page-selection");
+      } catch (error) {
+        console.error("Error detecting pages:", error);
+        toast.error("Erro ao detectar páginas do PDF");
+      }
+    } else {
+      // For images, process directly
+      setState("processing");
+      setProcessedDoc(null);
+      const result = await processDocument(file);
+      
+      if (result) {
+        setProcessedDoc(result);
+        setState("viewing");
+        setSelectedPageNumber(1);
+      } else {
+        setState("landing");
+      }
+    }
+  };
+
+  const handlePageSelectionConfirm = async (selectedPages: number[]) => {
+    if (!pendingFile) return;
+
     setState("processing");
     setProcessedDoc(null);
 
-    const result = await processDocument(file);
+    const result = await processDocument(pendingFile, selectedPages);
     
     if (result) {
       setProcessedDoc(result);
@@ -41,6 +79,14 @@ const Index = () => {
     } else {
       setState("landing");
     }
+    
+    setPendingFile(null);
+  };
+
+  const handlePageSelectionCancel = () => {
+    setState("landing");
+    setPendingFile(null);
+    setTotalPages(0);
   };
 
   const handlePageTextChange = (pageNumber: number, newText: string) => {
@@ -99,6 +145,17 @@ const Index = () => {
             <FeaturesSection />
             <UseCasesSection />
           </div>
+        </main>
+      )}
+
+      {/* Page Selection State */}
+      {state === "page-selection" && (
+        <main className="container mx-auto px-4 py-12">
+          <PageSelector
+            totalPages={totalPages}
+            onConfirm={handlePageSelectionConfirm}
+            onCancel={handlePageSelectionCancel}
+          />
         </main>
       )}
 

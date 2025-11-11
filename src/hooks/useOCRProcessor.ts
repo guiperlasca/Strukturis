@@ -8,7 +8,7 @@ export const useOCRProcessor = () => {
   const [progress, setProgress] = useState(0);
   const [currentDocument, setCurrentDocument] = useState<ProcessedDocument | null>(null);
 
-  const processDocument = async (file: File): Promise<ProcessedDocument | null> => {
+  const processDocument = async (file: File, selectedPages?: number[]): Promise<ProcessedDocument | null> => {
     try {
       setIsProcessing(true);
       setProgress(10);
@@ -45,6 +45,7 @@ export const useOCRProcessor = () => {
           mimeType: file.type,
           fileSize: file.size,
           userId: user.id,
+          selectedPages,
         },
       });
 
