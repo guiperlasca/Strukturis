@@ -36,6 +36,8 @@ const Index = () => {
     setCurrentPage(undefined);
     setTotalPages(undefined);
 
+    const startTime = performance.now();
+
     try {
       setStatus("Preparando documento...");
       setProgress(5);
@@ -81,12 +83,16 @@ const Index = () => {
       setStatus("Finalizando...");
       setProgress(100);
 
+      const endTime = performance.now();
+      const processingTime = endTime - startTime;
+
       const doc: ProcessedDocument = {
         originalFile: file,
         pages: result.pages,
         overallConfidence: result.overallConfidence,
         totalPages: result.pages.length,
         processedAt: new Date(),
+        processingTime,
         documentType: "documentType" in result ? result.documentType : undefined,
         detectedLanguage: "detectedLanguage" in result ? result.detectedLanguage : "pt-BR",
       };
@@ -208,15 +214,21 @@ const Index = () => {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
-                    onClick={() => setShowReport(!showReport)}
+                    onClick={() => {
+                      setShowReport(!showReport);
+                      setShowExport(false);
+                    }}
                     variant={showReport ? "default" : "outline"}
                   >
                     {showReport ? "Ocultar" : "Ver"} Relatório
                   </Button>
                   <Button
-                    onClick={() => setShowExport(!showExport)}
+                    onClick={() => {
+                      setShowExport(!showExport);
+                      setShowReport(false);
+                    }}
                     variant={showExport ? "default" : "outline"}
                     className="gap-2"
                   >
