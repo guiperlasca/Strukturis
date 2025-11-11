@@ -512,12 +512,17 @@ function base64UrlEncode(str: string): string {
 }
 
 async function signWithRSA(data: string, privateKey: string): Promise<string> {
+  // Replace literal \n with actual newlines and clean up the key
+  const cleanKey = privateKey.replace(/\\n/g, '\n');
+  
   const pemHeader = '-----BEGIN PRIVATE KEY-----';
   const pemFooter = '-----END PRIVATE KEY-----';
-  const pemContents = privateKey.substring(
-    pemHeader.length,
-    privateKey.length - pemFooter.length
-  ).replace(/\s/g, '');
+  
+  // Extract just the base64 content between headers
+  const pemContents = cleanKey
+    .replace(pemHeader, '')
+    .replace(pemFooter, '')
+    .replace(/\s/g, '');
 
   const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
 
