@@ -5,9 +5,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { PageResult } from "@/types/document";
-import { Save, AlertCircle } from "lucide-react";
+import { Save, AlertCircle, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { AISuggestions } from "./AISuggestions";
 
 interface TextEditorProps {
   pages: PageResult[];
@@ -17,12 +18,18 @@ interface TextEditorProps {
 export const TextEditor = ({ pages, onSave }: TextEditorProps) => {
   const [editedPages, setEditedPages] = useState<PageResult[]>(pages);
   const [hasChanges, setHasChanges] = useState(false);
+  const [selectedPageIndex, setSelectedPageIndex] = useState(0);
 
   const handleTextChange = (pageIndex: number, newText: string) => {
     const updated = [...editedPages];
     updated[pageIndex] = { ...updated[pageIndex], text: newText };
     setEditedPages(updated);
     setHasChanges(true);
+  };
+
+  const handleApplyAICorrection = (correctedText: string) => {
+    handleTextChange(selectedPageIndex, correctedText);
+    toast.success("Correção aplicada com sucesso!");
   };
 
   const handleSave = () => {
@@ -64,7 +71,10 @@ export const TextEditor = ({ pages, onSave }: TextEditorProps) => {
         </Button>
       </div>
 
-      <Tabs defaultValue="page-1" className="w-full">
+      <Tabs defaultValue="page-1" className="w-full" onValueChange={(value) => {
+        const pageNum = parseInt(value.replace("page-", ""));
+        setSelectedPageIndex(pageNum - 1);
+      }}>
         <TabsList className="mb-4 w-full justify-start overflow-x-auto">
           {editedPages.map((page) => (
             <TabsTrigger
@@ -86,6 +96,14 @@ export const TextEditor = ({ pages, onSave }: TextEditorProps) => {
         {editedPages.map((page, index) => (
           <TabsContent key={page.pageNumber} value={`page-${page.pageNumber}`}>
             <div className="space-y-4">
+              {/* AI Suggestions */}
+              {page.confidence < 90 && (
+                <AISuggestions
+                  text={page.text}
+                  context={`Página ${page.pageNumber} de documento`}
+                  onApply={handleApplyAICorrection}
+                />
+              )}
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-foreground">

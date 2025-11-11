@@ -43,6 +43,9 @@ export type DocumentType =
   | "report"
   | "letter"
   | "form"
+  | "payslip"
+  | "personnel_file"
+  | "timecard"
   | "other";
 
 export interface DocumentTypeInfo {
