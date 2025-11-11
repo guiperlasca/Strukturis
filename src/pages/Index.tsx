@@ -2,67 +2,56 @@ import { useState } from "react";
 import { Header } from "@/components/Header";
 import { FileUpload } from "@/components/FileUpload";
 import { ProcessingStatus } from "@/components/ProcessingStatus";
+import { DocumentSidebar } from "@/components/DocumentSidebar";
+import { SplitView } from "@/components/SplitView";
+import { ExportOptions } from "@/components/ExportOptions";
+import { ConfidenceReport } from "@/components/ConfidenceReport";
 import { FeaturesSection } from "@/components/FeaturesSection";
 import { StatsSection } from "@/components/StatsSection";
 import { UseCasesSection } from "@/components/UseCasesSection";
-import { StepIndicator } from "@/components/StepIndicator";
-import { TextEditor } from "@/components/TextEditor";
-import { ExportOptions } from "@/components/ExportOptions";
-import { ConfidenceReport } from "@/components/ConfidenceReport";
-import { processImage, processPDF } from "@/utils/ocr";
-import { ProcessedDocument, ProcessStep, PageResult } from "@/types/document";
-import { toast } from "sonner";
+import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { RotateCcw } from "lucide-react";
+import { processImage, processPDF } from "@/utils/ocr";
+import { ProcessedDocument, PageResult } from "@/types/document";
+import { toast } from "sonner";
+import { RotateCcw, Download } from "lucide-react";
 
-type ProcessState = "idle" | "processing" | "review" | "export";
+type AppState = "landing" | "processing" | "viewing";
 
 const Index = () => {
-  const [state, setState] = useState<ProcessState>("idle");
-  const [currentStep, setCurrentStep] = useState<ProcessStep>("upload");
-  const [completedSteps, setCompletedSteps] = useState<ProcessStep[]>([]);
+  const [state, setState] = useState<AppState>("landing");
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
   const [currentPage, setCurrentPage] = useState<number>();
   const [totalPages, setTotalPages] = useState<number>();
   const [processedDoc, setProcessedDoc] = useState<ProcessedDocument | null>(null);
-
-  const markStepComplete = (step: ProcessStep) => {
-    setCompletedSteps((prev) => [...prev, step]);
-  };
+  const [selectedPageNumber, setSelectedPageNumber] = useState(1);
+  const [showReport, setShowReport] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
   const handleFileSelect = async (file: File) => {
     setState("processing");
-    setCurrentStep("upload");
-    setCompletedSteps([]);
     setProgress(0);
     setProcessedDoc(null);
     setCurrentPage(undefined);
     setTotalPages(undefined);
 
     try {
-      // Step 1: Upload
-      markStepComplete("upload");
-      setCurrentStep("preprocessing");
       setStatus("Preparando documento...");
       setProgress(5);
 
       await new Promise((resolve) => setTimeout(resolve, 800));
 
-      // Step 2: Preprocessing
       setStatus("Aplicando correções automáticas na imagem...");
       setProgress(15);
       await new Promise((resolve) => setTimeout(resolve, 1200));
-      markStepComplete("preprocessing");
 
-      // Step 3: OCR
-      setCurrentStep("ocr");
       setStatus("Carregando modelo OCR com IA...");
       setProgress(25);
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      let result: { 
-        pages: PageResult[]; 
+      let result: {
+        pages: PageResult[];
         overallConfidence: number;
         documentType?: any;
         detectedLanguage?: string;
@@ -74,7 +63,7 @@ const Index = () => {
           setCurrentPage(current);
           setTotalPages(total);
           setStatus(`Processando OCR - Página ${current} de ${total}...`);
-          const pageProgress = 25 + ((current / total) * 40);
+          const pageProgress = 25 + ((current / total) * 60);
           setProgress(Math.round(pageProgress));
         });
         result = pdfResult;
@@ -86,22 +75,11 @@ const Index = () => {
           pages: [imageResult],
           overallConfidence: imageResult.confidence,
         };
-        setProgress(65);
+        setProgress(85);
       }
 
-      markStepComplete("ocr");
-
-      // Step 4: Extraction
-      setCurrentStep("extraction");
-      setStatus("Extraindo texto e detectando tabelas...");
-      setProgress(75);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      markStepComplete("extraction");
-
-      // Step 5: Review
-      setCurrentStep("review");
-      setStatus("Preparando para revisão...");
-      setProgress(90);
+      setStatus("Finalizando...");
+      setProgress(100);
 
       const doc: ProcessedDocument = {
         originalFile: file,
@@ -114,151 +92,168 @@ const Index = () => {
       };
 
       await new Promise((resolve) => setTimeout(resolve, 500));
-      setProgress(100);
       setProcessedDoc(doc);
-      setState("review");
-      markStepComplete("review");
+      setState("viewing");
+      setSelectedPageNumber(1);
 
       toast.success("Documento processado com sucesso!");
     } catch (error) {
       console.error("Erro ao processar:", error);
       toast.error("Erro ao processar o documento. Tente novamente.");
-      setState("idle");
-      setCurrentStep("upload");
-      setCompletedSteps([]);
+      setState("landing");
     }
   };
 
-  const handleSaveEdits = (updatedPages: PageResult[]) => {
+  const handlePageTextChange = (pageNumber: number, newText: string) => {
     if (!processedDoc) return;
 
-    const updatedDoc: ProcessedDocument = {
+    const updatedPages = processedDoc.pages.map((p) =>
+      p.pageNumber === pageNumber ? { ...p, text: newText } : p
+    );
+
+    setProcessedDoc({
       ...processedDoc,
       pages: updatedPages,
-    };
-
-    setProcessedDoc(updatedDoc);
+    });
   };
 
-  const handleGoToExport = () => {
-    setCurrentStep("export");
-    setState("export");
-    markStepComplete("export");
+  const handleSavePage = () => {
+    toast.success("Alterações salvas!");
   };
 
   const handleReset = () => {
-    setState("idle");
-    setCurrentStep("upload");
-    setCompletedSteps([]);
+    setState("landing");
     setProgress(0);
     setStatus("");
     setCurrentPage(undefined);
     setTotalPages(undefined);
     setProcessedDoc(null);
+    setSelectedPageNumber(1);
+    setShowReport(false);
+    setShowExport(false);
   };
+
+  const currentPageData = processedDoc?.pages.find(
+    (p) => p.pageNumber === selectedPageNumber
+  );
 
   return (
     <div className="min-h-screen bg-background">
       <Header />
 
-      <main className="container mx-auto px-4 py-8">
-        <div className="mx-auto max-w-7xl">
-          {/* Show step indicator during processing and review */}
-          {state !== "idle" && (
-            <StepIndicator currentStep={currentStep} completedSteps={completedSteps} />
-          )}
-
-          {/* Initial state - Landing page */}
-          {state === "idle" && (
-            <>
-              <div className="mb-12 text-center">
-                <h2 className="mb-4 text-4xl font-bold text-foreground">
-                  Automatize a Transcrição de Documentos
-                </h2>
-                <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
-                  Elimine a transcrição manual de PDFs digitalizados. Solução profissional
-                  para escritórios jurídicos, RH, contabilidade e empresas.
-                </p>
-              </div>
-
-              <StatsSection />
-
-              <div className="my-12">
-                <FileUpload onFileSelect={handleFileSelect} isProcessing={false} />
-              </div>
-
-              <FeaturesSection />
-              <UseCasesSection />
-            </>
-          )}
-
-          {/* Processing state */}
-          {state === "processing" && (
-            <div className="mx-auto max-w-2xl">
-              <ProcessingStatus
-                progress={progress}
-                status={status}
-                currentPage={currentPage}
-                totalPages={totalPages}
-              />
+      {/* Landing Page */}
+      {state === "landing" && (
+        <main className="container mx-auto px-4 py-12">
+          <div className="mx-auto max-w-7xl">
+            <div className="mb-12 text-center">
+              <h2 className="mb-4 text-4xl font-bold text-foreground">
+                Automatize a Transcrição de Documentos
+              </h2>
+              <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
+                Elimine a transcrição manual de PDFs digitalizados. Solução profissional
+                para escritórios jurídicos, RH, contabilidade e empresas.
+              </p>
             </div>
-          )}
 
-          {/* Review state */}
-          {state === "review" && processedDoc && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground">Revisão do Documento</h2>
-                  <p className="text-muted-foreground">
-                    {processedDoc.documentType && (
-                      <span>
-                        {processedDoc.documentType.icon} {processedDoc.documentType.label} •{" "}
-                      </span>
-                    )}
-                    Confiabilidade geral: <span className="font-semibold">{processedDoc.overallConfidence}%</span>
-                  </p>
+            <StatsSection />
+
+            <div className="my-12">
+              <FileUpload onFileSelect={handleFileSelect} isProcessing={false} />
+            </div>
+
+            <FeaturesSection />
+            <UseCasesSection />
+          </div>
+        </main>
+      )}
+
+      {/* Processing State */}
+      {state === "processing" && (
+        <main className="container mx-auto px-4 py-12">
+          <div className="mx-auto max-w-2xl">
+            <ProcessingStatus
+              progress={progress}
+              status={status}
+              currentPage={currentPage}
+              totalPages={totalPages}
+            />
+          </div>
+        </main>
+      )}
+
+      {/* Viewing State with Sidebar */}
+      {state === "viewing" && processedDoc && (
+        <SidebarProvider>
+          <div className="flex min-h-[calc(100vh-64px)] w-full">
+            <DocumentSidebar
+              pages={processedDoc.pages}
+              currentPage={selectedPageNumber}
+              onPageSelect={setSelectedPageNumber}
+            />
+
+            <main className="flex flex-1 flex-col">
+              {/* Top Bar */}
+              <div className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
+                <div className="flex items-center gap-4">
+                  <SidebarTrigger />
+                  <div>
+                    <h1 className="text-lg font-semibold text-foreground">
+                      {processedDoc.originalFile.name}
+                    </h1>
+                    <p className="text-sm text-muted-foreground">
+                      {processedDoc.documentType?.icon} {processedDoc.documentType?.label} •{" "}
+                      {processedDoc.totalPages} página{processedDoc.totalPages > 1 ? "s" : ""} •{" "}
+                      {processedDoc.overallConfidence}% confiabilidade
+                    </p>
+                  </div>
                 </div>
-                <div className="flex gap-3">
+
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => setShowReport(!showReport)}
+                    variant={showReport ? "default" : "outline"}
+                  >
+                    {showReport ? "Ocultar" : "Ver"} Relatório
+                  </Button>
+                  <Button
+                    onClick={() => setShowExport(!showExport)}
+                    variant={showExport ? "default" : "outline"}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Exportar
+                  </Button>
                   <Button onClick={handleReset} variant="outline" className="gap-2">
                     <RotateCcw className="h-4 w-4" />
-                    Processar Novo
-                  </Button>
-                  <Button onClick={handleGoToExport} className="gap-2 bg-gradient-primary">
-                    Prosseguir para Exportação
+                    Novo Documento
                   </Button>
                 </div>
               </div>
 
-              <ConfidenceReport document={processedDoc} />
-              <TextEditor pages={processedDoc.pages} onSave={handleSaveEdits} />
-            </div>
-          )}
-
-          {/* Export state */}
-          {state === "export" && processedDoc && (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-foreground">
-                    Exportar Documento Processado
-                  </h2>
-                  <p className="text-muted-foreground">
-                    {processedDoc.totalPages} página{processedDoc.totalPages > 1 ? "s" : ""} •{" "}
-                    {processedDoc.overallConfidence}% confiabilidade
-                  </p>
-                </div>
-                <Button onClick={handleReset} variant="outline" className="gap-2">
-                  <RotateCcw className="h-4 w-4" />
-                  Processar Novo Documento
-                </Button>
+              {/* Content Area */}
+              <div className="flex-1 overflow-auto p-6">
+                {showReport ? (
+                  <ConfidenceReport document={processedDoc} />
+                ) : showExport ? (
+                  <ExportOptions document={processedDoc} />
+                ) : currentPageData ? (
+                  <SplitView
+                    page={currentPageData}
+                    onTextChange={(text) =>
+                      handlePageTextChange(selectedPageNumber, text)
+                    }
+                    onSave={handleSavePage}
+                  />
+                ) : (
+                  <div className="flex h-full items-center justify-center text-muted-foreground">
+                    Página não encontrada
+                  </div>
+                )}
               </div>
-
-              <ExportOptions document={processedDoc} />
-            </div>
-          )}
-        </div>
-      </main>
+            </main>
+          </div>
+        </SidebarProvider>
+      )}
 
       <footer className="border-t border-border py-8">
         <div className="container mx-auto px-4 text-center">
