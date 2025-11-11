@@ -16,6 +16,15 @@ export const useOCRProcessor = () => {
         selectedPages 
       });
       
+      // Validate file size (50MB limit for free tier)
+      const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB in bytes
+      if (file.size > MAX_FILE_SIZE) {
+        const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+        const maxSizeMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(0);
+        toast.error(`Arquivo muito grande: ${fileSizeMB}MB. Limite: ${maxSizeMB}MB. Tente comprimir o PDF ou dividir em partes menores.`);
+        return null;
+      }
+      
       setIsProcessing(true);
       setProgress(10);
       
