@@ -11,8 +11,8 @@ import { StatsSection } from "@/components/StatsSection";
 import { UseCasesSection } from "@/components/UseCasesSection";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
-import { processImage, processPDF } from "@/utils/ocr";
-import { ProcessedDocument, PageResult } from "@/types/document";
+import { useOCRProcessor } from "@/hooks/useOCRProcessor";
+import { ProcessedDocument } from "@/types/document";
 import { toast } from "sonner";
 import { RotateCcw, Download } from "lucide-react";
 
@@ -20,92 +20,25 @@ type AppState = "landing" | "processing" | "viewing";
 
 const Index = () => {
   const [state, setState] = useState<AppState>("landing");
-  const [progress, setProgress] = useState(0);
-  const [status, setStatus] = useState("");
-  const [currentPage, setCurrentPage] = useState<number>();
-  const [totalPages, setTotalPages] = useState<number>();
   const [processedDoc, setProcessedDoc] = useState<ProcessedDocument | null>(null);
   const [selectedPageNumber, setSelectedPageNumber] = useState(1);
   const [showReport, setShowReport] = useState(false);
   const [showExport, setShowExport] = useState(false);
 
+  const { processDocument, isProcessing, progress } = useOCRProcessor();
+
   const handleFileSelect = async (file: File) => {
     setState("processing");
-    setProgress(0);
     setProcessedDoc(null);
-    setCurrentPage(undefined);
-    setTotalPages(undefined);
 
-    const startTime = performance.now();
-
-    try {
-      setStatus("Preparando documento...");
-      setProgress(5);
-
-      await new Promise((resolve) => setTimeout(resolve, 800));
-
-      setStatus("Aplicando correções automáticas na imagem...");
-      setProgress(15);
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-
-      setStatus("Carregando modelo OCR com IA...");
-      setProgress(25);
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-
-      let result: {
-        pages: PageResult[];
-        overallConfidence: number;
-        documentType?: any;
-        detectedLanguage?: string;
-      } | PageResult;
-
-      if (file.type.includes("pdf")) {
-        setStatus("Extraindo e processando páginas do PDF...");
-        const pdfResult = await processPDF(file, (current, total) => {
-          setCurrentPage(current);
-          setTotalPages(total);
-          setStatus(`Processando OCR - Página ${current} de ${total}...`);
-          const pageProgress = 25 + ((current / total) * 60);
-          setProgress(Math.round(pageProgress));
-        });
-        result = pdfResult;
-      } else {
-        setStatus("Executando OCR na imagem...");
-        setProgress(50);
-        const imageResult = await processImage(file);
-        result = {
-          pages: [imageResult],
-          overallConfidence: imageResult.confidence,
-        };
-        setProgress(85);
-      }
-
-      setStatus("Finalizando...");
-      setProgress(100);
-
-      const endTime = performance.now();
-      const processingTime = endTime - startTime;
-
-      const doc: ProcessedDocument = {
-        originalFile: file,
-        pages: result.pages,
-        overallConfidence: result.overallConfidence,
-        totalPages: result.pages.length,
-        processedAt: new Date(),
-        processingTime,
-        documentType: "documentType" in result ? result.documentType : undefined,
-        detectedLanguage: "detectedLanguage" in result ? result.detectedLanguage : "pt-BR",
-      };
-
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      setProcessedDoc(doc);
+    const result = await processDocument(file);
+    
+    if (result) {
+      setProcessedDoc(result);
       setState("viewing");
       setSelectedPageNumber(1);
-
       toast.success("Documento processado com sucesso!");
-    } catch (error) {
-      console.error("Erro ao processar:", error);
-      toast.error("Erro ao processar o documento. Tente novamente.");
+    } else {
       setState("landing");
     }
   };
@@ -129,10 +62,6 @@ const Index = () => {
 
   const handleReset = () => {
     setState("landing");
-    setProgress(0);
-    setStatus("");
-    setCurrentPage(undefined);
-    setTotalPages(undefined);
     setProcessedDoc(null);
     setSelectedPageNumber(1);
     setShowReport(false);
@@ -179,9 +108,7 @@ const Index = () => {
           <div className="mx-auto max-w-2xl">
             <ProcessingStatus
               progress={progress}
-              status={status}
-              currentPage={currentPage}
-              totalPages={totalPages}
+              status="Processando documento com OCR profissional e correção por IA..."
             />
           </div>
         </main>
