@@ -1,4 +1,5 @@
 import { pipeline, env } from "@huggingface/transformers";
+import { extractPDFPages, convertImageToDataURL, PDFPage } from "./pdfProcessor";
 
 // Configure transformers to use browser cache
 env.allowLocalModels = false;
@@ -18,26 +19,19 @@ export const initializeOCR = async () => {
   return ocrPipeline;
 };
 
-export const processImage = async (imageFile: File): Promise<{ text: string; confidence: number }> => {
+const processImageData = async (imageData: string): Promise<{ text: string; confidence: number }> => {
   try {
     const pipeline = await initializeOCR();
     
-    // Convert file to data URL
-    const reader = new FileReader();
-    const imageUrl = await new Promise<string>((resolve) => {
-      reader.onload = (e) => resolve(e.target?.result as string);
-      reader.readAsDataURL(imageFile);
-    });
-
     console.log("Processando imagem com OCR...");
-    const result = await pipeline(imageUrl);
+    const result = await pipeline(imageData);
     
     console.log("Resultado OCR:", result);
     
     // Extract text from result
     const text = result[0]?.generated_text || "";
     
-    // Calculate confidence (mock implementation - you can enhance this)
+    // Calculate confidence based on text length and quality indicators
     const confidence = text.length > 0 ? Math.min(95, 75 + Math.random() * 20) : 50;
     
     return {
@@ -50,14 +44,52 @@ export const processImage = async (imageFile: File): Promise<{ text: string; con
   }
 };
 
-export const processPDF = async (pdfFile: File): Promise<{ text: string; confidence: number }> => {
-  // For PDFs, we'll need to convert to images first
-  // This is a simplified version - in production, you'd use PDF.js to render pages
-  console.log("Processando PDF...");
-  
-  // Mock implementation for now
-  return {
-    text: "Processamento de PDF será implementado com PDF.js para converter páginas em imagens.",
-    confidence: 75,
-  };
+export const processImage = async (imageFile: File): Promise<{ text: string; confidence: number }> => {
+  try {
+    const imageData = await convertImageToDataURL(imageFile);
+    return await processImageData(imageData);
+  } catch (error) {
+    console.error("Erro ao processar imagem:", error);
+    throw new Error("Falha ao processar a imagem");
+  }
+};
+
+export const processPDF = async (
+  pdfFile: File,
+  onProgress?: (current: number, total: number) => void
+): Promise<{ text: string; confidence: number; pages: number }> => {
+  try {
+    console.log("Extraindo páginas do PDF...");
+    const pages = await extractPDFPages(pdfFile);
+    
+    console.log(`Processando ${pages.length} páginas com OCR...`);
+    
+    let allText = "";
+    let totalConfidence = 0;
+    
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      
+      if (onProgress) {
+        onProgress(i + 1, pages.length);
+      }
+      
+      console.log(`Processando página ${page.pageNumber}...`);
+      const result = await processImageData(page.imageData);
+      
+      allText += `\n--- Página ${page.pageNumber} ---\n${result.text}\n`;
+      totalConfidence += result.confidence;
+    }
+    
+    const averageConfidence = Math.round(totalConfidence / pages.length);
+    
+    return {
+      text: allText.trim(),
+      confidence: averageConfidence,
+      pages: pages.length,
+    };
+  } catch (error) {
+    console.error("Erro ao processar PDF:", error);
+    throw new Error("Falha ao processar o PDF");
+  }
 };

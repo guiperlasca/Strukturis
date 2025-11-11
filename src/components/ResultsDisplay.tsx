@@ -7,10 +7,11 @@ import { toast } from "sonner";
 interface ResultsDisplayProps {
   text: string;
   confidence: number;
+  pages?: number;
   onReset: () => void;
 }
 
-export const ResultsDisplay = ({ text, confidence, onReset }: ResultsDisplayProps) => {
+export const ResultsDisplay = ({ text, confidence, pages, onReset }: ResultsDisplayProps) => {
   const handleCopy = () => {
     navigator.clipboard.writeText(text);
     toast.success("Texto copiado para a área de transferência!");
@@ -54,7 +55,7 @@ export const ResultsDisplay = ({ text, confidence, onReset }: ResultsDisplayProp
                 Extração Concluída
               </h3>
               <p className="text-sm text-muted-foreground">
-                Texto processado com sucesso
+                {pages ? `${pages} página${pages > 1 ? 's' : ''} processada${pages > 1 ? 's' : ''}` : 'Texto processado com sucesso'}
               </p>
             </div>
           </div>

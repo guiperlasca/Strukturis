@@ -3,6 +3,9 @@ import { Header } from "@/components/Header";
 import { FileUpload } from "@/components/FileUpload";
 import { ProcessingStatus } from "@/components/ProcessingStatus";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
+import { FeaturesSection } from "@/components/FeaturesSection";
+import { StatsSection } from "@/components/StatsSection";
+import { UseCasesSection } from "@/components/UseCasesSection";
 import { processImage, processPDF } from "@/utils/ocr";
 import { toast } from "sonner";
 
@@ -12,31 +15,45 @@ const Index = () => {
   const [state, setState] = useState<ProcessState>("idle");
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("");
-  const [result, setResult] = useState<{ text: string; confidence: number } | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>();
+  const [totalPages, setTotalPages] = useState<number>();
+  const [result, setResult] = useState<{ text: string; confidence: number; pages?: number } | null>(null);
 
   const handleFileSelect = async (file: File) => {
     setState("processing");
     setProgress(0);
     setResult(null);
+    setCurrentPage(undefined);
+    setTotalPages(undefined);
 
     try {
       setStatus("Carregando modelo OCR...");
-      setProgress(20);
+      setProgress(10);
 
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      setStatus("Processando documento...");
-      setProgress(50);
-
       let extractedData;
       if (file.type.includes("pdf")) {
-        extractedData = await processPDF(file);
+        setStatus("Extraindo páginas do PDF...");
+        setProgress(20);
+
+        extractedData = await processPDF(file, (current, total) => {
+          setCurrentPage(current);
+          setTotalPages(total);
+          setStatus("Processando páginas...");
+          // Progress from 20% to 90% based on page processing
+          const pageProgress = 20 + ((current / total) * 70);
+          setProgress(Math.round(pageProgress));
+        });
       } else {
+        setStatus("Processando imagem...");
+        setProgress(50);
         extractedData = await processImage(file);
+        setProgress(80);
       }
 
-      setProgress(80);
       setStatus("Finalizando extração...");
+      setProgress(95);
 
       await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -56,6 +73,8 @@ const Index = () => {
     setState("idle");
     setProgress(0);
     setStatus("");
+    setCurrentPage(undefined);
+    setTotalPages(undefined);
     setResult(null);
   };
 
@@ -64,30 +83,50 @@ const Index = () => {
       <Header />
       
       <main className="container mx-auto px-4 py-12">
-        <div className="mx-auto max-w-4xl">
-          <div className="mb-8 text-center">
-            <h2 className="mb-3 text-3xl font-bold text-foreground">
-              Transforme Documentos Digitalizados em Texto
-            </h2>
-            <p className="text-lg text-muted-foreground">
-              Upload de PDFs e imagens para extração inteligente com OCR e IA
-            </p>
-          </div>
-
+        <div className="mx-auto max-w-7xl">
           {state === "idle" && (
-            <FileUpload onFileSelect={handleFileSelect} isProcessing={false} />
+            <>
+              <div className="mb-12 text-center">
+                <h2 className="mb-4 text-4xl font-bold text-foreground">
+                  Automatize a Transcrição de Documentos
+                </h2>
+                <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
+                  Elimine a transcrição manual de PDFs digitalizados. 
+                  Solução profissional para escritórios jurídicos, RH, contabilidade e empresas.
+                </p>
+              </div>
+
+              <StatsSection />
+
+              <div className="my-12">
+                <FileUpload onFileSelect={handleFileSelect} isProcessing={false} />
+              </div>
+
+              <FeaturesSection />
+              <UseCasesSection />
+            </>
           )}
 
           {state === "processing" && (
-            <ProcessingStatus progress={progress} status={status} />
+            <div className="mx-auto max-w-2xl">
+              <ProcessingStatus 
+                progress={progress} 
+                status={status}
+                currentPage={currentPage}
+                totalPages={totalPages}
+              />
+            </div>
           )}
 
           {state === "completed" && result && (
-            <ResultsDisplay
-              text={result.text}
-              confidence={result.confidence}
-              onReset={handleReset}
-            />
+            <div className="mx-auto max-w-4xl">
+              <ResultsDisplay
+                text={result.text}
+                confidence={result.confidence}
+                pages={result.pages}
+                onReset={handleReset}
+              />
+            </div>
           )}
         </div>
       </main>
