@@ -12,6 +12,7 @@ export interface PageResult {
   confidence: number;
   hasTable: boolean;
   tableData?: string[][];
+  language?: string;
 }
 
 export interface ProcessedDocument {
@@ -20,6 +21,8 @@ export interface ProcessedDocument {
   overallConfidence: number;
   totalPages: number;
   processedAt: Date;
+  documentType?: DocumentTypeInfo;
+  detectedLanguage?: string;
 }
 
 export type ProcessStep = 
@@ -29,3 +32,22 @@ export type ProcessStep =
   | "extraction"
   | "review"
   | "export";
+
+export type DocumentType = 
+  | "legal_petition"
+  | "contract"
+  | "invoice"
+  | "resume"
+  | "id_document"
+  | "receipt"
+  | "report"
+  | "letter"
+  | "form"
+  | "other";
+
+export interface DocumentTypeInfo {
+  type: DocumentType;
+  confidence: number;
+  label: string;
+  icon: string;
+}

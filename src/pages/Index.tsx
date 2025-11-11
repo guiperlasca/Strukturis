@@ -8,6 +8,7 @@ import { UseCasesSection } from "@/components/UseCasesSection";
 import { StepIndicator } from "@/components/StepIndicator";
 import { TextEditor } from "@/components/TextEditor";
 import { ExportOptions } from "@/components/ExportOptions";
+import { ConfidenceReport } from "@/components/ConfidenceReport";
 import { processImage, processPDF } from "@/utils/ocr";
 import { ProcessedDocument, ProcessStep, PageResult } from "@/types/document";
 import { toast } from "sonner";
@@ -60,7 +61,12 @@ const Index = () => {
       setProgress(25);
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      let result: { pages: PageResult[]; overallConfidence: number } | PageResult;
+      let result: { 
+        pages: PageResult[]; 
+        overallConfidence: number;
+        documentType?: any;
+        detectedLanguage?: string;
+      } | PageResult;
 
       if (file.type.includes("pdf")) {
         setStatus("Extraindo e processando páginas do PDF...");
@@ -103,6 +109,8 @@ const Index = () => {
         overallConfidence: result.overallConfidence,
         totalPages: result.pages.length,
         processedAt: new Date(),
+        documentType: "documentType" in result ? result.documentType : undefined,
+        detectedLanguage: "detectedLanguage" in result ? result.detectedLanguage : "pt-BR",
       };
 
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -203,6 +211,11 @@ const Index = () => {
                 <div>
                   <h2 className="text-2xl font-bold text-foreground">Revisão do Documento</h2>
                   <p className="text-muted-foreground">
+                    {processedDoc.documentType && (
+                      <span>
+                        {processedDoc.documentType.icon} {processedDoc.documentType.label} •{" "}
+                      </span>
+                    )}
                     Confiabilidade geral: <span className="font-semibold">{processedDoc.overallConfidence}%</span>
                   </p>
                 </div>
@@ -217,6 +230,7 @@ const Index = () => {
                 </div>
               </div>
 
+              <ConfidenceReport document={processedDoc} />
               <TextEditor pages={processedDoc.pages} onSave={handleSaveEdits} />
             </div>
           )}
