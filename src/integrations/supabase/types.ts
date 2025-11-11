@@ -14,7 +14,107 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      ocr_documents: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          detected_language: string | null
+          document_type: string | null
+          error_message: string | null
+          file_size: number | null
+          id: string
+          mime_type: string | null
+          original_filename: string
+          overall_confidence: number | null
+          processing_time_ms: number | null
+          status: string
+          storage_path: string
+          total_pages: number | null
+          user_id: string | null
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          detected_language?: string | null
+          document_type?: string | null
+          error_message?: string | null
+          file_size?: number | null
+          id?: string
+          mime_type?: string | null
+          original_filename: string
+          overall_confidence?: number | null
+          processing_time_ms?: number | null
+          status?: string
+          storage_path: string
+          total_pages?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          detected_language?: string | null
+          document_type?: string | null
+          error_message?: string | null
+          file_size?: number | null
+          id?: string
+          mime_type?: string | null
+          original_filename?: string
+          overall_confidence?: number | null
+          processing_time_ms?: number | null
+          status?: string
+          storage_path?: string
+          total_pages?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      ocr_pages: {
+        Row: {
+          confidence: number | null
+          corrected_text: string | null
+          created_at: string
+          detected_language: string | null
+          document_id: string
+          has_table: boolean | null
+          id: string
+          page_number: number
+          raw_text: string | null
+          table_data: Json | null
+        }
+        Insert: {
+          confidence?: number | null
+          corrected_text?: string | null
+          created_at?: string
+          detected_language?: string | null
+          document_id: string
+          has_table?: boolean | null
+          id?: string
+          page_number: number
+          raw_text?: string | null
+          table_data?: Json | null
+        }
+        Update: {
+          confidence?: number | null
+          corrected_text?: string | null
+          created_at?: string
+          detected_language?: string | null
+          document_id?: string
+          has_table?: boolean | null
+          id?: string
+          page_number?: number
+          raw_text?: string | null
+          table_data?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ocr_pages_document_id_fkey"
+            columns: ["document_id"]
+            isOneToOne: false
+            referencedRelation: "ocr_documents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
