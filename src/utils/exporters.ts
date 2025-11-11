@@ -1,4 +1,8 @@
 import { ProcessedDocument, PageResult } from "@/types/document";
+import * as XLSX from "xlsx";
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableCell, TableRow } from "docx";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 /**
  * Export to plain text
@@ -188,6 +192,297 @@ export const exportToHtml = (doc: ProcessedDocument): Blob => {
 </html>`;
 
   return new Blob([html], { type: "text/html;charset=utf-8" });
+};
+
+/**
+ * Export to Excel (.xlsx)
+ */
+export const exportToExcel = (doc: ProcessedDocument): Blob => {
+  const workbook = XLSX.utils.book_new();
+
+  // Summary sheet
+  const summaryData = [
+    ["Strukturis - Relatório de Processamento OCR"],
+    [],
+    ["Arquivo:", doc.originalFile.name],
+    ["Processado em:", doc.processedAt.toLocaleString("pt-BR")],
+    ["Confiabilidade Geral:", `${doc.overallConfidence}%`],
+    ["Total de Páginas:", doc.totalPages],
+    ["Tipo de Documento:", doc.documentType?.label || "Não identificado"],
+    ["Idioma:", doc.detectedLanguage || "pt-BR"],
+    ["Tempo de Processamento:", `${(doc.processingTime / 1000).toFixed(2)}s`],
+    [],
+    ["Página", "Confiabilidade", "Tem Tabela", "Caracteres"],
+  ];
+
+  doc.pages.forEach((page) => {
+    summaryData.push([
+      page.pageNumber,
+      `${page.confidence}%`,
+      page.hasTable ? "Sim" : "Não",
+      page.text.length,
+    ]);
+  });
+
+  const summarySheet = XLSX.utils.aoa_to_sheet(summaryData);
+  XLSX.utils.book_append_sheet(workbook, summarySheet, "Resumo");
+
+  // Text pages
+  doc.pages.forEach((page) => {
+    const pageData = [
+      [`Página ${page.pageNumber}`],
+      [`Confiabilidade: ${page.confidence}%`],
+      [],
+      [page.text],
+    ];
+
+    const pageSheet = XLSX.utils.aoa_to_sheet(pageData);
+    const sheetName = `Página ${page.pageNumber}`.substring(0, 31);
+    XLSX.utils.book_append_sheet(workbook, pageSheet, sheetName);
+  });
+
+  // Tables sheet (if any)
+  const tablesData: any[] = [["Strukturis - Tabelas Extraídas"], []];
+  let hasAnyTable = false;
+
+  doc.pages.forEach((page) => {
+    if (page.hasTable && page.tableData && page.tableData.length > 0) {
+      hasAnyTable = true;
+      tablesData.push([`Página ${page.pageNumber}`]);
+      page.tableData.forEach((row) => {
+        tablesData.push(row);
+      });
+      tablesData.push([]);
+    }
+  });
+
+  if (hasAnyTable) {
+    const tablesSheet = XLSX.utils.aoa_to_sheet(tablesData);
+    XLSX.utils.book_append_sheet(workbook, tablesSheet, "Tabelas");
+  }
+
+  const excelBuffer = XLSX.write(workbook, { type: "array", bookType: "xlsx" });
+  return new Blob([excelBuffer], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
+};
+
+/**
+ * Export to Word (.docx)
+ */
+export const exportToWord = async (doc: ProcessedDocument): Promise<Blob> => {
+  const children: any[] = [];
+
+  // Header
+  children.push(
+    new Paragraph({
+      text: "Strukturis - Documento Processado",
+      heading: HeadingLevel.HEADING_1,
+      spacing: { after: 200 },
+    })
+  );
+
+  children.push(
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Arquivo: ", bold: true }),
+        new TextRun(doc.originalFile.name),
+      ],
+      spacing: { after: 100 },
+    })
+  );
+
+  children.push(
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Processado em: ", bold: true }),
+        new TextRun(doc.processedAt.toLocaleString("pt-BR")),
+      ],
+      spacing: { after: 100 },
+    })
+  );
+
+  children.push(
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Confiabilidade Geral: ", bold: true }),
+        new TextRun(`${doc.overallConfidence}%`),
+      ],
+      spacing: { after: 100 },
+    })
+  );
+
+  children.push(
+    new Paragraph({
+      children: [
+        new TextRun({ text: "Total de Páginas: ", bold: true }),
+        new TextRun(String(doc.totalPages)),
+      ],
+      spacing: { after: 300 },
+    })
+  );
+
+  // Pages
+  doc.pages.forEach((page, index) => {
+    if (index > 0) {
+      children.push(
+        new Paragraph({
+          text: "",
+          pageBreakBefore: true,
+        })
+      );
+    }
+
+    children.push(
+      new Paragraph({
+        text: `Página ${page.pageNumber}`,
+        heading: HeadingLevel.HEADING_2,
+        spacing: { after: 200 },
+      })
+    );
+
+    children.push(
+      new Paragraph({
+        children: [
+          new TextRun({ text: "Confiabilidade: ", bold: true }),
+          new TextRun(`${page.confidence}%`),
+        ],
+        spacing: { after: 200 },
+      })
+    );
+
+    // Split text into paragraphs
+    const textParagraphs = page.text.split("\n").filter((line) => line.trim());
+    textParagraphs.forEach((line) => {
+      children.push(
+        new Paragraph({
+          text: line,
+          spacing: { after: 100 },
+        })
+      );
+    });
+
+    // Add table if exists
+    if (page.hasTable && page.tableData && page.tableData.length > 0) {
+      children.push(
+        new Paragraph({
+          text: "Tabela Detectada",
+          heading: HeadingLevel.HEADING_3,
+          spacing: { before: 200, after: 100 },
+        })
+      );
+
+      const tableRows = page.tableData.map(
+        (row) =>
+          new TableRow({
+            children: row.map(
+              (cell) =>
+                new TableCell({
+                  children: [new Paragraph(cell)],
+                })
+            ),
+          })
+      );
+
+      children.push(
+        new Table({
+          rows: tableRows,
+        })
+      );
+    }
+  });
+
+  const docx = new Document({
+    sections: [
+      {
+        children,
+      },
+    ],
+  });
+
+  const buffer = await Packer.toBlob(docx);
+  return buffer;
+};
+
+/**
+ * Export to searchable PDF
+ */
+export const exportToPDF = (doc: ProcessedDocument): Blob => {
+  const pdf = new jsPDF();
+  let yPosition = 20;
+
+  // Header
+  pdf.setFontSize(18);
+  pdf.setFont("helvetica", "bold");
+  pdf.text("Strukturis - Documento Processado", 20, yPosition);
+  yPosition += 10;
+
+  pdf.setFontSize(10);
+  pdf.setFont("helvetica", "normal");
+  pdf.text(`Arquivo: ${doc.originalFile.name}`, 20, yPosition);
+  yPosition += 6;
+  pdf.text(`Processado em: ${doc.processedAt.toLocaleString("pt-BR")}`, 20, yPosition);
+  yPosition += 6;
+  pdf.text(`Confiabilidade Geral: ${doc.overallConfidence}%`, 20, yPosition);
+  yPosition += 6;
+  pdf.text(`Total de Páginas: ${doc.totalPages}`, 20, yPosition);
+  yPosition += 15;
+
+  // Pages
+  doc.pages.forEach((page, index) => {
+    if (index > 0) {
+      pdf.addPage();
+      yPosition = 20;
+    }
+
+    pdf.setFontSize(14);
+    pdf.setFont("helvetica", "bold");
+    pdf.text(`Página ${page.pageNumber}`, 20, yPosition);
+    yPosition += 8;
+
+    pdf.setFontSize(10);
+    pdf.setFont("helvetica", "normal");
+    pdf.text(`Confiabilidade: ${page.confidence}%`, 20, yPosition);
+    yPosition += 10;
+
+    // Add text with word wrap
+    const textLines = pdf.splitTextToSize(page.text, 170);
+    textLines.forEach((line: string) => {
+      if (yPosition > 270) {
+        pdf.addPage();
+        yPosition = 20;
+      }
+      pdf.text(line, 20, yPosition);
+      yPosition += 6;
+    });
+
+    // Add table if exists
+    if (page.hasTable && page.tableData && page.tableData.length > 0) {
+      yPosition += 5;
+      if (yPosition > 200) {
+        pdf.addPage();
+        yPosition = 20;
+      }
+
+      pdf.setFontSize(12);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("Tabela Detectada", 20, yPosition);
+      yPosition += 5;
+
+      autoTable(pdf, {
+        startY: yPosition,
+        head: [page.tableData[0]],
+        body: page.tableData.slice(1),
+        theme: "grid",
+        styles: { fontSize: 8 },
+        headStyles: { fillColor: [37, 99, 235] },
+      });
+
+      yPosition = (pdf as any).lastAutoTable.finalY + 10;
+    }
+  });
+
+  return pdf.output("blob");
 };
 
 /**

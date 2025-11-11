@@ -59,5 +59,11 @@ verify_jwt = false
 [functions.ai-suggest-fill]
 verify_jwt = false
 
+[functions.ocr-process]
+verify_jwt = false
+
+[functions.ocr-status]
+verify_jwt = false
+
 [edge_runtime]
 policy = "per_worker"
