@@ -12,6 +12,7 @@ interface OCRRequest {
   mimeType: string;
   fileSize: number;
   userId: string;
+  selectedPages?: number[];
 }
 
 serve(async (req) => {
@@ -31,7 +32,7 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
     
-    const { storagePath, filename, mimeType, fileSize, userId }: OCRRequest = await req.json();
+    const { storagePath, filename, mimeType, fileSize, userId, selectedPages }: OCRRequest = await req.json();
 
     console.log("Processing OCR for:", { storagePath, filename, userId });
 
@@ -84,23 +85,39 @@ serve(async (req) => {
     console.log("Calling Google Document AI...");
     
     // Simulated OCR result - replace with actual API call
-    const mockPages = [
+    const allMockPages = [
       {
         text: "Este é um exemplo de texto extraído por OCR.\nNome: João Silva\nData: 15/03/2024\nDocumento: RG 12.345.678-9",
         confidence: 0.95,
         hasTables: false,
         tables: [],
+      },
+      {
+        text: "Página 2 do documento.\nEndereço: Rua das Flores, 123\nCEP: 12345-678\nCidade: São Paulo",
+        confidence: 0.92,
+        hasTables: false,
+        tables: [],
+      },
+      {
+        text: "Página 3 - Informações adicionais\nTelefone: (11) 98765-4321\nEmail: exemplo@email.com",
+        confidence: 0.94,
+        hasTables: true,
+        tables: [{ row: 1, col: 1, text: "Exemplo" }],
       }
     ];
 
-    const totalPages = mockPages.length;
+    // Filter pages based on selection
+    const pagesToProcess = selectedPages && selectedPages.length > 0
+      ? selectedPages.filter(p => p >= 1 && p <= allMockPages.length)
+      : Array.from({ length: allMockPages.length }, (_, i) => i + 1);
+    
+    console.log(`Total pages available: ${allMockPages.length}, Processing pages: ${pagesToProcess.join(', ')}`);
+
+    const totalPages = pagesToProcess.length;
     let overallConfidence = 0;
 
-    console.log(`Processing ${totalPages} pages...`);
-
-    for (let i = 0; i < mockPages.length; i++) {
-      const page = mockPages[i];
-      const pageNumber = i + 1;
+    for (const pageNumber of pagesToProcess) {
+      const page = allMockPages[pageNumber - 1];
       const pageText = page.text;
       const pageConfidence = page.confidence;
       overallConfidence += pageConfidence;
