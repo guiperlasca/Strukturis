@@ -25,9 +25,10 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const googleApiKey = Deno.env.get("GOOGLE_CLOUD_API_KEY");
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+    const googleCredentialsJson = Deno.env.get("GOOGLE_APPLICATION_CREDENTIALS_JSON");
 
-    if (!googleApiKey) {
-      throw new Error("GOOGLE_CLOUD_API_KEY not configured");
+    if (!googleCredentialsJson) {
+      throw new Error("GOOGLE_APPLICATION_CREDENTIALS_JSON not configured");
     }
 
     const supabase = createClient(supabaseUrl, supabaseKey);
@@ -59,23 +60,148 @@ serve(async (req) => {
 
     console.log("Document record created:", document.id);
 
-    // Don't download the file - too memory intensive
-    // Instead, create simulated pages based on selected pages
-    const totalPages = mimeType.includes('pdf') ? 5 : 1;
-    const pagesToProcess = selectedPages && selectedPages.length > 0 
-      ? selectedPages.filter((p: number) => p >= 1 && p <= totalPages)
-      : Array.from({ length: totalPages }, (_, i) => i + 1);
+    // Get signed URL for Google Cloud Vision API access
+    const { data: urlData } = await supabase.storage
+      .from("documents")
+      .createSignedUrl(storagePath, 3600); // 1 hour expiry
+
+    if (!urlData?.signedUrl) {
+      throw new Error("Failed to create signed URL for document");
+    }
+
+    console.log("Signed URL created for document access");
+
+    // Use Google Cloud Vision API for OCR
+    // First, get OAuth token from service account credentials
+    const credentials = JSON.parse(googleCredentialsJson);
     
-    console.log(`Processing ${pagesToProcess.length} pages of ${totalPages} total`);
+    // Create JWT for Google OAuth
+    const header = {
+      alg: "RS256",
+      typ: "JWT",
+      kid: credentials.private_key_id,
+    };
+
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: credentials.client_email,
+      scope: "https://www.googleapis.com/auth/cloud-platform",
+      aud: "https://oauth2.googleapis.com/token",
+      exp: now + 3600,
+      iat: now,
+    };
+
+    // Import private key and sign
+    const encoder = new TextEncoder();
+    const keyData = credentials.private_key.replace(/-----BEGIN PRIVATE KEY-----|-----END PRIVATE KEY-----|\n/g, "");
+    const binaryKey = Uint8Array.from(atob(keyData), c => c.charCodeAt(0));
+    
+    const cryptoKey = await crypto.subtle.importKey(
+      "pkcs8",
+      binaryKey,
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        hash: "SHA-256",
+      },
+      false,
+      ["sign"]
+    );
+
+    const dataToSign = `${btoa(JSON.stringify(header))}.${btoa(JSON.stringify(payload))}`;
+    const signature = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      cryptoKey,
+      encoder.encode(dataToSign)
+    );
+
+    const jwt = `${dataToSign}.${btoa(String.fromCharCode(...new Uint8Array(signature)))}`;
+
+    // Exchange JWT for access token
+    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
+    });
+
+    const tokenData = await tokenResponse.json();
+    const accessToken = tokenData.access_token;
+
+    console.log("Google OAuth token obtained");
+
+    // Determine pages to process
+    let pagesToProcess: number[] = [];
+    
+    if (mimeType.includes('pdf')) {
+      // For PDFs, use selected pages or default to first 5
+      const maxPages = 5; // Limit for demo
+      pagesToProcess = selectedPages && selectedPages.length > 0 
+        ? selectedPages.slice(0, maxPages)
+        : [1, 2, 3, 4, 5];
+    } else {
+      // For images, just one page
+      pagesToProcess = [1];
+    }
+    
+    console.log(`Will process pages: ${pagesToProcess.join(', ')}`);
 
     const pages = [];
     let overallConfidence = 0;
 
     for (const pageNum of pagesToProcess) {
-      console.log(`Processing page ${pageNum}...`);
+      console.log(`Processing page ${pageNum} with Google Vision API...`);
       
-      const rawText = `Texto extraído da página ${pageNum} do documento ${filename}.\n\nEste é um exemplo de texto que seria extraído pelo OCR.\n\nPágina ${pageNum} de ${totalPages}.`;
-      const pageConfidence = 0.95;
+      // Call Google Cloud Vision API for text detection
+      const visionResponse = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            requests: [{
+              image: {
+                source: {
+                  imageUri: urlData.signedUrl,
+                },
+              },
+              features: [{
+                type: "DOCUMENT_TEXT_DETECTION",
+                maxResults: 1,
+              }],
+            }],
+          }),
+        }
+      );
+
+      if (!visionResponse.ok) {
+        console.error("Vision API error:", await visionResponse.text());
+        throw new Error("Failed to process document with Google Vision API");
+      }
+
+      const visionData = await visionResponse.json();
+      const textAnnotations = visionData.responses?.[0]?.textAnnotations;
+      
+      let rawText = "";
+      let confidence = 0;
+
+      if (textAnnotations && textAnnotations.length > 0) {
+        rawText = textAnnotations[0].description || "";
+        // Calculate average confidence from all text annotations
+        const confidenceValues = textAnnotations
+          .slice(1) // Skip first which is full text
+          .map((a: any) => a.confidence || 0.9)
+          .filter((c: number) => c > 0);
+        
+        confidence = confidenceValues.length > 0
+          ? confidenceValues.reduce((sum: number, c: number) => sum + c, 0) / confidenceValues.length
+          : 0.9;
+      }
+
+      console.log(`Page ${pageNum} extracted, confidence: ${confidence}, text length: ${rawText.length}`);
+      
+      const pageConfidence = confidence;
       overallConfidence += pageConfidence;
 
       // Apply contextual correction with Lovable AI
