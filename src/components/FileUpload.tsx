@@ -61,7 +61,7 @@ export const FileUpload = ({ onFileSelect, isProcessing }: FileUploadProps) => {
             ou clique para selecionar
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Tamanho máximo: 50MB
+            Tamanho máximo: 100MB
           </p>
         </div>
 

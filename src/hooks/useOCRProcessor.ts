@@ -16,8 +16,8 @@ export const useOCRProcessor = () => {
         selectedPages 
       });
       
-      // Validate file size (50MB limit for free tier)
-      const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB in bytes
+      // Validate file size (100MB limit)
+      const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB in bytes
       if (file.size > MAX_FILE_SIZE) {
         const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
         const maxSizeMB = (MAX_FILE_SIZE / (1024 * 1024)).toFixed(0);
