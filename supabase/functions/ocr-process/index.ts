@@ -75,13 +75,22 @@ serve(async (req) => {
 
     console.log("File downloaded successfully, size:", fileData.size);
 
-    // Convert to base64 for Google Vision API
+    // Convert to base64 for Google Vision API (process in chunks to avoid stack overflow)
     const arrayBuffer = await fileData.arrayBuffer();
-    const base64Content = btoa(
-      String.fromCharCode(...new Uint8Array(arrayBuffer))
-    );
+    const bytes = new Uint8Array(arrayBuffer);
+    
+    // Process in 8KB chunks to avoid stack overflow
+    const chunkSize = 8192;
+    let binaryString = '';
+    
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.slice(i, i + chunkSize);
+      binaryString += String.fromCharCode(...chunk);
+    }
+    
+    const base64Content = btoa(binaryString);
 
-    console.log("File converted to base64");
+    console.log("File converted to base64, length:", base64Content.length);
 
     // Determine pages to process
     let pagesToProcess: number[] = [];
@@ -260,10 +269,17 @@ serve(async (req) => {
   } catch (error) {
     console.error("Error in ocr-process:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorStack = error instanceof Error ? error.stack : "No stack trace";
+    
+    console.error("Error details:", {
+      message: errorMessage,
+      stack: errorStack,
+    });
+    
     return new Response(
       JSON.stringify({ 
         error: errorMessage,
-        message: "Erro ao processar documento"
+        message: "Erro ao processar documento",
       }),
       { 
         status: 500, 
