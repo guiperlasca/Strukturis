@@ -96,6 +96,48 @@ export const classifyDocument = (text: string): DocumentTypeInfo => {
     "referências",
   ];
 
+  // Payslip keywords (NEW)
+  const payslipKeywords = [
+    "contracheque",
+    "holerite",
+    "folha de pagamento",
+    "salário bruto",
+    "salário líquido",
+    "descontos",
+    "inss",
+    "fgts",
+    "irrf",
+    "vale transporte",
+    "vale alimentação",
+  ];
+
+  // Personnel file keywords (NEW)
+  const personnelFileKeywords = [
+    "ficha",
+    "cadastro",
+    "dados pessoais",
+    "admissão",
+    "demissão",
+    "cargo",
+    "função",
+    "departamento",
+    "matrícula",
+    "colaborador",
+  ];
+
+  // Timecard keywords (NEW)
+  const timecardKeywords = [
+    "cartão ponto",
+    "registro de ponto",
+    "entrada",
+    "saída",
+    "intervalo",
+    "horas trabalhadas",
+    "horas extras",
+    "banco de horas",
+    "jornada",
+  ];
+
   // Count keyword matches
   const scores = {
     legal_petition: countMatches(lowerText, legalKeywords),
@@ -105,6 +147,9 @@ export const classifyDocument = (text: string): DocumentTypeInfo => {
     id_document: countMatches(lowerText, idKeywords),
     receipt: countMatches(lowerText, receiptKeywords),
     report: countMatches(lowerText, reportKeywords),
+    payslip: countMatches(lowerText, payslipKeywords),
+    personnel_file: countMatches(lowerText, personnelFileKeywords),
+    timecard: countMatches(lowerText, timecardKeywords),
   };
 
   // Find type with highest score
@@ -124,6 +169,9 @@ export const classifyDocument = (text: string): DocumentTypeInfo => {
     report: "Relatório",
     letter: "Carta/Ofício",
     form: "Formulário",
+    payslip: "Contracheque",
+    personnel_file: "Ficha de Pessoal",
+    timecard: "Cartão Ponto",
     other: "Documento Geral",
   };
 
@@ -137,6 +185,9 @@ export const classifyDocument = (text: string): DocumentTypeInfo => {
     report: "📊",
     letter: "✉️",
     form: "📋",
+    payslip: "💰",
+    personnel_file: "📁",
+    timecard: "⏰",
     other: "📄",
   };
 
