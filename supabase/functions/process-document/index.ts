@@ -47,19 +47,21 @@ interface PageResult {
 
 // Configuration helper with validation
 function getDocAIConfig() {
-  const credentialsJson = Deno.env.get('GOOGLE_APPLICATION_CREDENTIALS_JSON');
+  // CRITICAL: Use .trim() to remove any whitespace from environment variables
+  const credentialsJson = Deno.env.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')?.trim();
   const projectId = Deno.env.get('DOCAI_PROJECT_ID')?.trim();
   const location = Deno.env.get('DOCAI_LOCATION')?.trim() || 'us';
   const processorId = Deno.env.get('DOCAI_PROCESSOR_ID')?.trim();
 
-  console.log('Document AI Configuration Check:', {
-    hasCredentials: !!credentialsJson,
-    credentialsLength: credentialsJson?.length,
-    projectId: projectId || 'MISSING',
-    location,
-    processorId: processorId || 'MISSING',
-    processorIdLength: processorId?.length,
-  });
+  console.log('=== Document AI Configuration ===');
+  console.log('Credentials present:', !!credentialsJson);
+  console.log('Credentials length:', credentialsJson?.length || 0);
+  console.log('Project ID:', projectId || 'MISSING');
+  console.log('Location:', location);
+  console.log('Processor ID:', processorId || 'MISSING');
+  console.log('Processor ID length:', processorId?.length || 0);
+  console.log('Processor ID (hex check):', processorId ? /^[a-f0-9]+$/.test(processorId) : 'N/A');
+  console.log('=================================');
 
   // Validate configuration
   const errors: string[] = [];
@@ -77,17 +79,17 @@ function getDocAIConfig() {
   if (!projectId) {
     errors.push('DOCAI_PROJECT_ID is not set');
   } else if (!/^[a-z0-9-]+$/.test(projectId)) {
-    errors.push('DOCAI_PROJECT_ID has invalid format (should be lowercase alphanumeric with hyphens)');
+    errors.push(`DOCAI_PROJECT_ID has invalid format: "${projectId}" (should be lowercase alphanumeric with hyphens)`);
   }
 
   if (!processorId) {
     errors.push('DOCAI_PROCESSOR_ID is not set');
   } else if (!/^[a-f0-9]+$/.test(processorId)) {
-    errors.push('DOCAI_PROCESSOR_ID has invalid format (should be hexadecimal)');
+    errors.push(`DOCAI_PROCESSOR_ID has invalid format: "${processorId}" (should be hexadecimal, found length: ${processorId.length})`);
   }
 
   if (errors.length > 0) {
-    console.error('Configuration errors:', errors);
+    console.error('Configuration validation errors:', errors);
     return { valid: false, errors };
   }
 
@@ -113,7 +115,7 @@ async function retryWithBackoff<T>(
       return await fn();
     } catch (error) {
       lastError = error as Error;
-      console.log(`Attempt ${i + 1} failed:`, error);
+      console.log(`Attempt ${i + 1}/${maxRetries} failed:`, error instanceof Error ? error.message : error);
       
       if (i < maxRetries - 1) {
         const delay = baseDelay * Math.pow(2, i);
@@ -129,7 +131,7 @@ async function retryWithBackoff<T>(
 // Optimized base64 encoding for large files
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
-  const chunkSize = 8192;
+  const chunkSize = 16384; // 16KB chunks for better performance
   const chunks: string[] = [];
   
   for (let i = 0; i < bytes.length; i += chunkSize) {
@@ -147,7 +149,8 @@ serve(async (req) => {
   }
 
   try {
-    console.log('=== Process Document Request Started ===');
+    console.log('\n=== Process Document Request Started ===');
+    console.log('Timestamp:', new Date().toISOString());
     
     // Initialize Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
@@ -162,6 +165,7 @@ serve(async (req) => {
     // Authenticate user
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.error('Missing authorization header');
       return new Response(
         JSON.stringify({ error: 'Authorization header required' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -179,13 +183,13 @@ serve(async (req) => {
       );
     }
 
-    console.log('User authenticated:', user.id);
+    console.log('✓ User authenticated:', user.id);
 
     // Parse and validate request body
     const body: ProcessRequest = await req.json();
     const { fileUrl, mimeType, pagesMode, pagesCount, pagesList, export: exportOptions } = body;
 
-    console.log('Request details:', { 
+    console.log('Request parameters:', { 
       fileUrl: fileUrl?.substring(0, 50) + '...', 
       mimeType, 
       pagesMode,
@@ -194,6 +198,7 @@ serve(async (req) => {
     });
 
     if (!fileUrl || !mimeType || !pagesMode) {
+      console.error('Missing required fields');
       return new Response(
         JSON.stringify({ 
           error: 'Missing required fields',
@@ -206,31 +211,34 @@ serve(async (req) => {
     // Validate and get Document AI configuration
     const config = getDocAIConfig();
     if (!config.valid) {
+      console.error('✗ Document AI configuration invalid');
       return new Response(
         JSON.stringify({ 
           error: 'Document AI configuration error',
           details: config.errors,
-          help: 'Please check your environment variables in Supabase dashboard',
+          help: 'Please check your environment variables in Supabase Edge Functions settings. Make sure there are no leading/trailing spaces.',
         }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
+    console.log('✓ Document AI configuration valid');
     const { credentials, projectId, location, processorId } = config;
 
     // Download file from storage
     console.log('Downloading file from storage...');
     const filePath = fileUrl.replace(/^.*\/documents\//, '');
+    console.log('Storage path:', filePath);
     
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('documents')
       .download(filePath);
 
     if (downloadError || !fileData) {
-      console.error('File download error:', downloadError);
+      console.error('✗ File download error:', downloadError);
       return new Response(
         JSON.stringify({ 
-          error: 'Failed to download file',
+          error: 'Failed to download file from storage',
           details: downloadError?.message,
           filePath,
         }),
@@ -241,9 +249,10 @@ serve(async (req) => {
     const fileSize = fileData.size;
     const MAX_SIZE = 20 * 1024 * 1024; // 20MB Document AI limit
 
-    console.log(`File downloaded: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
+    console.log(`✓ File downloaded: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
 
     if (fileSize > MAX_SIZE) {
+      console.error('✗ File too large:', fileSize);
       return new Response(
         JSON.stringify({ 
           error: 'File too large',
@@ -258,10 +267,10 @@ serve(async (req) => {
     console.log('Converting file to base64...');
     const arrayBuffer = await fileData.arrayBuffer();
     const base64Content = arrayBufferToBase64(arrayBuffer);
-    console.log('Base64 conversion complete');
+    console.log(`✓ Base64 conversion complete (${base64Content.length} chars)`);
 
     // Get OAuth token with retry
-    console.log('Getting OAuth token...');
+    console.log('Obtaining OAuth token...');
     const tokenResponse = await retryWithBackoff(async () => {
       const jwt = await createJWT(credentials);
       
@@ -277,16 +286,17 @@ serve(async (req) => {
       if (!response.ok) {
         const errorText = await response.text();
         console.error('OAuth error response:', errorText);
-        throw new Error(`OAuth failed: ${errorText}`);
+        throw new Error(`OAuth failed (${response.status}): ${errorText}`);
       }
 
       return response.json();
     });
 
     const { access_token } = tokenResponse;
-    console.log('OAuth token obtained successfully');
+    console.log('✓ OAuth token obtained');
 
     // Create document record
+    console.log('Creating document record...');
     const { data: docData, error: docError } = await supabase
       .from('documents')
       .insert({
@@ -299,21 +309,21 @@ serve(async (req) => {
       .single();
 
     if (docError) {
-      console.error('Document creation error:', docError);
+      console.error('✗ Document creation error:', docError);
       throw new Error('Failed to create document record');
     }
 
     const documentId = docData.id;
-    console.log('Document record created:', documentId);
+    console.log('✓ Document record created:', documentId);
 
     // Call Document AI with retry
     const processorEndpoint = `https://${location}-documentai.googleapis.com/v1/projects/${projectId}/locations/${location}/processors/${processorId}:process`;
 
-    console.log('Calling Document AI:', {
-      endpoint: processorEndpoint,
-      mimeType,
-      fileSize: `${(fileSize / 1024).toFixed(2)}KB`,
-    });
+    console.log('\n=== Calling Document AI ===');
+    console.log('Endpoint:', processorEndpoint);
+    console.log('MIME Type:', mimeType);
+    console.log('File Size:', `${(fileSize / 1024).toFixed(2)}KB`);
+    console.log('===========================\n');
 
     const docAIResult = await retryWithBackoff(async () => {
       const response = await fetch(processorEndpoint, {
@@ -339,11 +349,10 @@ serve(async (req) => {
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Document AI error:', {
-          status: response.status,
-          statusText: response.statusText,
-          body: errorText,
-        });
+        console.error('\n=== Document AI Error ===');
+        console.error('Status:', response.status, response.statusText);
+        console.error('Response:', errorText);
+        console.error('========================\n');
         
         // Update document status
         await supabase
@@ -357,10 +366,11 @@ serve(async (req) => {
       return response.json();
     }, 2, 2000); // 2 retries with 2s base delay
 
-    console.log('Document AI processing successful');
+    console.log('✓ Document AI processing successful');
     const document = docAIResult.document;
 
     if (!document || !document.pages) {
+      console.error('✗ Invalid Document AI response structure');
       throw new Error('Document AI returned invalid response structure');
     }
 
@@ -388,7 +398,7 @@ serve(async (req) => {
       const page = document.pages[pageIndex];
 
       if (!page) {
-        console.warn(`Page ${pageNum} not found, skipping`);
+        console.warn(`⚠ Page ${pageNum} not found, skipping`);
         continue;
       }
 
@@ -434,7 +444,7 @@ serve(async (req) => {
         entities: entities,
       });
 
-      console.log(`Page ${pageNum} processed: ${status}, confidence: ${Math.round(confidence)}%`);
+      console.log(`✓ Page ${pageNum}: ${status}, confidence ${Math.round(confidence)}%, ${tables.length} tables, ${entities.length} fields`);
     }
 
     // Calculate metrics
@@ -447,12 +457,12 @@ serve(async (req) => {
     const tablesDetected = pageResults.reduce((sum, p) => sum + p.tables.length, 0);
     const fieldsDetected = pageResults.reduce((sum, p) => sum + p.entities.length, 0);
 
-    console.log('Processing summary:', {
-      readabilityConfidence,
-      pageSuccessRate,
-      tablesDetected,
-      fieldsDetected,
-    });
+    console.log('\n=== Processing Summary ===');
+    console.log('Readability Confidence:', readabilityConfidence + '%');
+    console.log('Page Success Rate:', pageSuccessRate + '%');
+    console.log('Tables Detected:', tablesDetected);
+    console.log('Fields Detected:', fieldsDetected);
+    console.log('==========================\n');
 
     // Update document status
     await supabase
@@ -467,37 +477,47 @@ serve(async (req) => {
     const exports: { jsonUrl?: string; csvUrl?: string } = {};
 
     if (exportOptions?.json) {
-      const jsonData = JSON.stringify({
-        documentId,
-        pageResults,
-        summary: {
-          readabilityConfidence,
-          pageSuccessRate,
-          tablesDetected,
-          fieldsDetected,
-        },
-      }, null, 2);
-      
-      const jsonPath = `${user.id}/processed/${documentId}.json`;
-      
-      await supabase.storage
-        .from('documents')
-        .upload(jsonPath, new Blob([jsonData], { type: 'application/json' }), { upsert: true });
-      
-      const { data: jsonUrl } = supabase.storage.from('documents').getPublicUrl(jsonPath);
-      exports.jsonUrl = jsonUrl.publicUrl;
+      try {
+        const jsonData = JSON.stringify({
+          documentId,
+          pageResults,
+          summary: {
+            readabilityConfidence,
+            pageSuccessRate,
+            tablesDetected,
+            fieldsDetected,
+          },
+        }, null, 2);
+        
+        const jsonPath = `${user.id}/processed/${documentId}.json`;
+        
+        await supabase.storage
+          .from('documents')
+          .upload(jsonPath, new Blob([jsonData], { type: 'application/json' }), { upsert: true });
+        
+        const { data: jsonUrl } = supabase.storage.from('documents').getPublicUrl(jsonPath);
+        exports.jsonUrl = jsonUrl.publicUrl;
+        console.log('✓ JSON export created');
+      } catch (error) {
+        console.error('⚠ JSON export failed:', error);
+      }
     }
 
     if (exportOptions?.csv && tablesDetected > 0) {
-      const csvData = generateCSV(pageResults);
-      const csvPath = `${user.id}/processed/${documentId}.csv`;
-      
-      await supabase.storage
-        .from('documents')
-        .upload(csvPath, new Blob([csvData], { type: 'text/csv' }), { upsert: true });
-      
-      const { data: csvUrl } = supabase.storage.from('documents').getPublicUrl(csvPath);
-      exports.csvUrl = csvUrl.publicUrl;
+      try {
+        const csvData = generateCSV(pageResults);
+        const csvPath = `${user.id}/processed/${documentId}.csv`;
+        
+        await supabase.storage
+          .from('documents')
+          .upload(csvPath, new Blob([csvData], { type: 'text/csv' }), { upsert: true });
+        
+        const { data: csvUrl } = supabase.storage.from('documents').getPublicUrl(csvPath);
+        exports.csvUrl = csvUrl.publicUrl;
+        console.log('✓ CSV export created');
+      } catch (error) {
+        console.error('⚠ CSV export failed:', error);
+      }
     }
 
     // Save exports
@@ -509,7 +529,7 @@ serve(async (req) => {
       });
     }
 
-    console.log('=== Process Document Request Completed Successfully ===');
+    console.log('=== Process Document Request Completed Successfully ===\n');
 
     return new Response(
       JSON.stringify({
@@ -528,8 +548,10 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error('=== Process Document Request Failed ===');
+    console.error('\n=== Process Document Request Failed ===');
     console.error('Error:', error);
+    console.error('Stack:', error instanceof Error ? error.stack : 'N/A');
+    console.error('=========================================\n');
     
     return new Response(
       JSON.stringify({ 
@@ -541,7 +563,10 @@ serve(async (req) => {
   }
 });
 
-// Helper functions
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
 function extractPageText(document: any, page: any): string {
   const getText = (segment: any) => {
     if (!segment?.layout?.textAnchor?.textSegments) return '';
@@ -557,15 +582,16 @@ function extractPageText(document: any, page: any): string {
 
   const texts: string[] = [];
 
-  if (page.paragraphs) {
-    texts.push(...page.paragraphs.map(getText));
-  } else if (page.lines) {
-    texts.push(...page.lines.map(getText));
-  } else if (page.tokens) {
-    texts.push(...page.tokens.map(getText));
+  // Try multiple extraction methods
+  if (page.paragraphs && page.paragraphs.length > 0) {
+    texts.push(...page.paragraphs.map(getText).filter((t: string) => t.trim()));
+  } else if (page.lines && page.lines.length > 0) {
+    texts.push(...page.lines.map(getText).filter((t: string) => t.trim()));
+  } else if (page.tokens && page.tokens.length > 0) {
+    texts.push(...page.tokens.map(getText).filter((t: string) => t.trim()));
   }
 
-  return texts.filter(t => t.trim()).join('\n');
+  return texts.join('\n').trim();
 }
 
 function calculatePageConfidence(page: any): number {
@@ -661,7 +687,7 @@ function extractTables(document: any, page: any, pageIndex: number): TableData[]
     }
     
     return {
-      name: `table_${pageIndex + 1}_${idx + 1}`,
+      name: `Tabela_Pag${pageIndex + 1}_${idx + 1}`,
       confidence: table.detectionConfidence ? Math.round(table.detectionConfidence * 100) : 85,
       rows,
     };
@@ -677,15 +703,27 @@ function extractEntities(document: any, pageIndex: number): Entity[] {
       return pageRefs.some((ref: any) => parseInt(ref.page || '0') === pageIndex);
     })
     .map((entity: any) => ({
-      field: entity.type || 'unknown',
-      value: entity.mentionText || '',
+      field: entity.type || 'campo_desconhecido',
+      value: entity.mentionText || entity.normalizedValue?.text || '',
       confidence: entity.confidence ? Math.round(entity.confidence * 100) : 0,
     }))
     .filter((e: Entity) => e.value.trim() !== '');
 }
 
 function generateCSV(pageResults: PageResult[]): string {
-  const allRows: string[][] = [['Page', 'Table', 'Row', ...Array.from({ length: 20 }, (_, i) => `Col${i + 1}`)]];
+  // Find max columns
+  let maxCols = 0;
+  for (const page of pageResults) {
+    for (const table of page.tables) {
+      for (const row of table.rows) {
+        maxCols = Math.max(maxCols, row.length);
+      }
+    }
+  }
+
+  // Build CSV
+  const headers = ['Pagina', 'Tabela', 'Linha', ...Array.from({ length: maxCols }, (_, i) => `Coluna_${i + 1}`)];
+  const allRows: string[][] = [headers];
   
   for (const page of pageResults) {
     for (const table of page.tables) {
@@ -696,6 +734,7 @@ function generateCSV(pageResults: PageResult[]): string {
           table.name,
           (rowIdx + 1).toString(),
           ...row.map(cell => `"${cell.replace(/"/g, '""')}"`),
+          ...Array(Math.max(0, maxCols - row.length)).fill('""'),
         ];
         allRows.push(csvRow);
       }
@@ -720,8 +759,7 @@ async function createJWT(credentials: any): Promise<string> {
   const encodedPayload = base64UrlEncode(JSON.stringify(payload));
   const signatureInput = `${encodedHeader}.${encodedPayload}`;
 
-  const privateKey = credentials.private_key;
-  const signature = await signWithRSA(signatureInput, privateKey);
+  const signature = await signWithRSA(signatureInput, credentials.private_key);
   
   return `${signatureInput}.${signature}`;
 }
@@ -734,7 +772,7 @@ function base64UrlEncode(str: string): string {
 }
 
 async function signWithRSA(data: string, privateKey: string): Promise<string> {
-  // Clean up the private key
+  // Clean up the private key - handle both \n and actual newlines
   const cleanKey = privateKey.replace(/\\n/g, '\n');
   
   const pemHeader = '-----BEGIN PRIVATE KEY-----';
