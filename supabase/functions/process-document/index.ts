@@ -45,133 +45,246 @@ interface PageResult {
   confidence: number;
 }
 
+// Configuration helper with validation
+function getDocAIConfig() {
+  const credentialsJson = Deno.env.get('GOOGLE_APPLICATION_CREDENTIALS_JSON');
+  const projectId = Deno.env.get('DOCAI_PROJECT_ID')?.trim();
+  const location = Deno.env.get('DOCAI_LOCATION')?.trim() || 'us';
+  const processorId = Deno.env.get('DOCAI_PROCESSOR_ID')?.trim();
+
+  console.log('Document AI Configuration Check:', {
+    hasCredentials: !!credentialsJson,
+    credentialsLength: credentialsJson?.length,
+    projectId: projectId || 'MISSING',
+    location,
+    processorId: processorId || 'MISSING',
+    processorIdLength: processorId?.length,
+  });
+
+  // Validate configuration
+  const errors: string[] = [];
+  
+  if (!credentialsJson) {
+    errors.push('GOOGLE_APPLICATION_CREDENTIALS_JSON is not set');
+  } else {
+    try {
+      JSON.parse(credentialsJson);
+    } catch {
+      errors.push('GOOGLE_APPLICATION_CREDENTIALS_JSON is not valid JSON');
+    }
+  }
+
+  if (!projectId) {
+    errors.push('DOCAI_PROJECT_ID is not set');
+  } else if (!/^[a-z0-9-]+$/.test(projectId)) {
+    errors.push('DOCAI_PROJECT_ID has invalid format (should be lowercase alphanumeric with hyphens)');
+  }
+
+  if (!processorId) {
+    errors.push('DOCAI_PROCESSOR_ID is not set');
+  } else if (!/^[a-f0-9]+$/.test(processorId)) {
+    errors.push('DOCAI_PROCESSOR_ID has invalid format (should be hexadecimal)');
+  }
+
+  if (errors.length > 0) {
+    console.error('Configuration errors:', errors);
+    return { valid: false, errors };
+  }
+
+  return {
+    valid: true,
+    credentials: JSON.parse(credentialsJson!),
+    projectId: projectId!,
+    location,
+    processorId: processorId!,
+  };
+}
+
+// Retry helper for transient failures
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelay = 1000
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error as Error;
+      console.log(`Attempt ${i + 1} failed:`, error);
+      
+      if (i < maxRetries - 1) {
+        const delay = baseDelay * Math.pow(2, i);
+        console.log(`Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  throw lastError;
+}
+
+// Optimized base64 encoding for large files
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 8192;
+  const chunks: string[] = [];
+  
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.slice(i, i + chunkSize);
+    chunks.push(String.fromCharCode(...chunk));
+  }
+  
+  return btoa(chunks.join(''));
+}
+
 serve(async (req) => {
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    console.log('=== Process Document Request Started ===');
+    
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+
+    if (!supabaseUrl || !supabaseKey) {
+      throw new Error('Supabase configuration missing');
+    }
+
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get auth user
+    // Authenticate user
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Authorization required' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ error: 'Authorization header required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const token = authHeader.replace('Bearer ', '');
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
 
     if (authError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    const body: ProcessRequest = await req.json();
-    const { fileUrl, mimeType, pagesMode, pagesCount, pagesList, export: exportOptions } = body;
-
-    console.log('Processing document:', { fileUrl, mimeType, pagesMode, user: user.id });
-
-    // Validate input
-    if (!fileUrl || !mimeType || !pagesMode) {
-      return new Response(JSON.stringify({ error: 'Missing required fields' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Get Document AI credentials
-    const credentialsJson = Deno.env.get('GOOGLE_APPLICATION_CREDENTIALS_JSON');
-    const projectId = Deno.env.get('DOCAI_PROJECT_ID')?.trim();
-    const location = Deno.env.get('DOCAI_LOCATION')?.trim() || 'us';
-    const processorId = Deno.env.get('DOCAI_PROCESSOR_ID')?.trim();
-
-    console.log('Document AI Configuration:', {
-      hasCredentials: !!credentialsJson,
-      projectId,
-      location,
-      processorId,
-    });
-
-    if (!credentialsJson || !projectId || !processorId) {
-      console.error('Missing Document AI configuration');
+      console.error('Authentication failed:', authError);
       return new Response(
-        JSON.stringify({ 
-          error: 'Document AI not configured',
-          details: {
-            hasCredentials: !!credentialsJson,
-            hasProjectId: !!projectId,
-            hasProcessorId: !!processorId,
-          }
-        }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ error: 'Invalid or expired token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const credentials = JSON.parse(credentialsJson);
+    console.log('User authenticated:', user.id);
+
+    // Parse and validate request body
+    const body: ProcessRequest = await req.json();
+    const { fileUrl, mimeType, pagesMode, pagesCount, pagesList, export: exportOptions } = body;
+
+    console.log('Request details:', { 
+      fileUrl: fileUrl?.substring(0, 50) + '...', 
+      mimeType, 
+      pagesMode,
+      pagesCount,
+      pagesList: pagesList?.length,
+    });
+
+    if (!fileUrl || !mimeType || !pagesMode) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Missing required fields',
+          required: ['fileUrl', 'mimeType', 'pagesMode'],
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Validate and get Document AI configuration
+    const config = getDocAIConfig();
+    if (!config.valid) {
+      return new Response(
+        JSON.stringify({ 
+          error: 'Document AI configuration error',
+          details: config.errors,
+          help: 'Please check your environment variables in Supabase dashboard',
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { credentials, projectId, location, processorId } = config;
 
     // Download file from storage
+    console.log('Downloading file from storage...');
+    const filePath = fileUrl.replace(/^.*\/documents\//, '');
+    
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('documents')
-      .download(fileUrl.replace(/^.*\/documents\//, ''));
+      .download(filePath);
 
     if (downloadError || !fileData) {
       console.error('File download error:', downloadError);
-      return new Response(JSON.stringify({ error: 'File not found or invalid URL' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      return new Response(
+        JSON.stringify({ 
+          error: 'Failed to download file',
+          details: downloadError?.message,
+          filePath,
+        }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const fileSize = fileData.size;
-    const MAX_SIZE = 20 * 1024 * 1024; // 20MB limit for Document AI
+    const MAX_SIZE = 20 * 1024 * 1024; // 20MB Document AI limit
+
+    console.log(`File downloaded: ${(fileSize / 1024 / 1024).toFixed(2)}MB`);
 
     if (fileSize > MAX_SIZE) {
       return new Response(
-        JSON.stringify({ error: `File size ${(fileSize / 1024 / 1024).toFixed(2)}MB exceeds 20MB limit` }),
+        JSON.stringify({ 
+          error: 'File too large',
+          size: `${(fileSize / 1024 / 1024).toFixed(2)}MB`,
+          limit: '20MB',
+        }),
         { status: 413, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     // Convert file to base64
+    console.log('Converting file to base64...');
     const arrayBuffer = await fileData.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    const chunkSize = 8192;
-    let binaryString = '';
-    
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      const chunk = bytes.slice(i, i + chunkSize);
-      binaryString += String.fromCharCode(...chunk);
-    }
-    
-    const base64Content = btoa(binaryString);
+    const base64Content = arrayBufferToBase64(arrayBuffer);
+    console.log('Base64 conversion complete');
 
-    // Get OAuth token
-    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-        assertion: await createJWT(credentials),
-      }),
+    // Get OAuth token with retry
+    console.log('Getting OAuth token...');
+    const tokenResponse = await retryWithBackoff(async () => {
+      const jwt = await createJWT(credentials);
+      
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+          assertion: jwt,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('OAuth error response:', errorText);
+        throw new Error(`OAuth failed: ${errorText}`);
+      }
+
+      return response.json();
     });
 
-    if (!tokenResponse.ok) {
-      console.error('OAuth token error:', await tokenResponse.text());
-      return new Response(
-        JSON.stringify({ error: 'Failed to authenticate with Google' }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const { access_token } = await tokenResponse.json();
+    const { access_token } = tokenResponse;
+    console.log('OAuth token obtained successfully');
 
     // Create document record
     const { data: docData, error: docError } = await supabase
@@ -187,63 +300,72 @@ serve(async (req) => {
 
     if (docError) {
       console.error('Document creation error:', docError);
-      return new Response(JSON.stringify({ error: 'Failed to create document record' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+      throw new Error('Failed to create document record');
     }
 
     const documentId = docData.id;
+    console.log('Document record created:', documentId);
 
-    // Call Document AI
+    // Call Document AI with retry
     const processorEndpoint = `https://${location}-documentai.googleapis.com/v1/projects/${projectId}/locations/${location}/processors/${processorId}:process`;
 
     console.log('Calling Document AI:', {
       endpoint: processorEndpoint,
-      mimeType: mimeType,
+      mimeType,
+      fileSize: `${(fileSize / 1024).toFixed(2)}KB`,
     });
 
-    const docAIResponse = await fetch(processorEndpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${access_token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        rawDocument: {
-          content: base64Content,
-          mimeType: mimeType,
+    const docAIResult = await retryWithBackoff(async () => {
+      const response = await fetch(processorEndpoint, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${access_token}`,
+          'Content-Type': 'application/json',
         },
-        processOptions: {
-          ocrConfig: {
-            enableNativePdfParsing: true,
-            enableImageQualityScores: true,
-            computeStyleInfo: true,
+        body: JSON.stringify({
+          rawDocument: {
+            content: base64Content,
+            mimeType: mimeType,
           },
-        },
-      }),
-    });
+          processOptions: {
+            ocrConfig: {
+              enableNativePdfParsing: true,
+              enableImageQualityScores: true,
+              computeStyleInfo: true,
+            },
+          },
+        }),
+      });
 
-    if (!docAIResponse.ok) {
-      const errorText = await docAIResponse.text();
-      console.error('Document AI error:', errorText);
-      
-      await supabase
-        .from('documents')
-        .update({ status: 'failed' })
-        .eq('id', documentId);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Document AI error:', {
+          status: response.status,
+          statusText: response.statusText,
+          body: errorText,
+        });
+        
+        // Update document status
+        await supabase
+          .from('documents')
+          .update({ status: 'failed' })
+          .eq('id', documentId);
 
-      return new Response(
-        JSON.stringify({ error: 'Document AI processing failed', details: errorText }),
-        { status: 502, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
+        throw new Error(`Document AI failed (${response.status}): ${errorText}`);
+      }
 
-    const docAIResult = await docAIResponse.json();
+      return response.json();
+    }, 2, 2000); // 2 retries with 2s base delay
+
+    console.log('Document AI processing successful');
     const document = docAIResult.document;
 
+    if (!document || !document.pages) {
+      throw new Error('Document AI returned invalid response structure');
+    }
+
     // Determine pages to process
-    const totalPages = document.pages?.length || 0;
+    const totalPages = document.pages.length;
     let pagesToProcess: number[] = [];
 
     if (pagesMode === 'all') {
@@ -254,7 +376,7 @@ serve(async (req) => {
       pagesToProcess = pagesList.filter(p => p >= 1 && p <= totalPages);
     }
 
-    console.log('Processing pages:', pagesToProcess);
+    console.log(`Processing ${pagesToProcess.length} of ${totalPages} pages`);
 
     // Process each page
     const pageResults: PageResult[] = [];
@@ -265,7 +387,10 @@ serve(async (req) => {
       const pageIndex = pageNum - 1;
       const page = document.pages[pageIndex];
 
-      if (!page) continue;
+      if (!page) {
+        console.warn(`Page ${pageNum} not found, skipping`);
+        continue;
+      }
 
       // Extract text
       const pageText = extractPageText(document, page);
@@ -280,7 +405,7 @@ serve(async (req) => {
       if (status === 'ok') successCount++;
 
       // Extract tables
-      const tables = extractTables(page, pageIndex);
+      const tables = extractTables(document, page, pageIndex);
 
       // Extract entities
       const entities = extractEntities(document, pageIndex);
@@ -292,7 +417,7 @@ serve(async (req) => {
         text: pageText,
         tables,
         entities,
-        confidence,
+        confidence: Math.round(confidence),
       };
 
       pageResults.push(pageResult);
@@ -302,23 +427,32 @@ serve(async (req) => {
         document_id: documentId,
         page: pageNum,
         status,
-        confidence,
+        confidence: Math.round(confidence),
         quality_hints: qualityHints,
         text: pageText,
         tables: tables,
         entities: entities,
       });
+
+      console.log(`Page ${pageNum} processed: ${status}, confidence: ${Math.round(confidence)}%`);
     }
 
     // Calculate metrics
     const readabilityConfidence = pagesToProcess.length > 0 
-      ? totalConfidence / pagesToProcess.length 
+      ? Math.round(totalConfidence / pagesToProcess.length)
       : 0;
     const pageSuccessRate = pagesToProcess.length > 0 
-      ? (successCount / pagesToProcess.length) * 100 
+      ? Math.round((successCount / pagesToProcess.length) * 100)
       : 0;
     const tablesDetected = pageResults.reduce((sum, p) => sum + p.tables.length, 0);
     const fieldsDetected = pageResults.reduce((sum, p) => sum + p.entities.length, 0);
+
+    console.log('Processing summary:', {
+      readabilityConfidence,
+      pageSuccessRate,
+      tablesDetected,
+      fieldsDetected,
+    });
 
     // Update document status
     await supabase
@@ -333,7 +467,17 @@ serve(async (req) => {
     const exports: { jsonUrl?: string; csvUrl?: string } = {};
 
     if (exportOptions?.json) {
-      const jsonData = JSON.stringify({ documentId, pageResults, summary: { readabilityConfidence, pageSuccessRate, tablesDetected, fieldsDetected } }, null, 2);
+      const jsonData = JSON.stringify({
+        documentId,
+        pageResults,
+        summary: {
+          readabilityConfidence,
+          pageSuccessRate,
+          tablesDetected,
+          fieldsDetected,
+        },
+      }, null, 2);
+      
       const jsonPath = `${user.id}/processed/${documentId}.json`;
       
       await supabase.storage
@@ -365,13 +509,15 @@ serve(async (req) => {
       });
     }
 
+    console.log('=== Process Document Request Completed Successfully ===');
+
     return new Response(
       JSON.stringify({
         documentId,
         pagesProcessed: pagesToProcess,
         summary: {
-          readabilityConfidence: Math.round(readabilityConfidence),
-          pageSuccessRate: Math.round(pageSuccessRate),
+          readabilityConfidence,
+          pageSuccessRate,
           tablesDetected,
           fieldsDetected,
         },
@@ -382,9 +528,14 @@ serve(async (req) => {
     );
 
   } catch (error) {
+    console.error('=== Process Document Request Failed ===');
     console.error('Error:', error);
+    
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+      }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -393,7 +544,8 @@ serve(async (req) => {
 // Helper functions
 function extractPageText(document: any, page: any): string {
   const getText = (segment: any) => {
-    if (!segment.layout?.textAnchor?.textSegments) return '';
+    if (!segment?.layout?.textAnchor?.textSegments) return '';
+    
     return segment.layout.textAnchor.textSegments
       .map((s: any) => {
         const start = parseInt(s.startIndex || '0');
@@ -403,68 +555,117 @@ function extractPageText(document: any, page: any): string {
       .join('');
   };
 
+  const texts: string[] = [];
+
   if (page.paragraphs) {
-    return page.paragraphs.map(getText).join('\n');
-  }
-  
-  if (page.lines) {
-    return page.lines.map(getText).join('\n');
+    texts.push(...page.paragraphs.map(getText));
+  } else if (page.lines) {
+    texts.push(...page.lines.map(getText));
+  } else if (page.tokens) {
+    texts.push(...page.tokens.map(getText));
   }
 
-  return '';
+  return texts.filter(t => t.trim()).join('\n');
 }
 
 function calculatePageConfidence(page: any): number {
-  if (!page.detectedLanguages?.[0]?.confidence) return 70;
-  
-  const langConfidence = page.detectedLanguages[0].confidence * 100;
-  const qualityScore = page.quality?.qualityScore || 0.7;
-  
-  return (langConfidence * 0.7 + qualityScore * 100 * 0.3);
+  const scores: number[] = [];
+
+  // Language detection confidence
+  if (page.detectedLanguages?.[0]?.confidence) {
+    scores.push(page.detectedLanguages[0].confidence * 100);
+  }
+
+  // Quality score
+  if (page.quality?.qualityScore) {
+    scores.push(page.quality.qualityScore * 100);
+  }
+
+  // Default confidence if no scores available
+  if (scores.length === 0) {
+    return 75;
+  }
+
+  // Average of available scores
+  return scores.reduce((sum, score) => sum + score, 0) / scores.length;
 }
 
 function detectQualityIssues(page: any): string[] {
   const hints: string[] = [];
   
+  // Check for page skew
   if (page.transforms) {
-    page.transforms.forEach((t: any) => {
-      if (Math.abs(t.rows?.[0]?.[1] || 0) > 0.1) hints.push('skew');
-    });
+    for (const transform of page.transforms) {
+      if (Math.abs(transform.rows?.[0]?.[1] || 0) > 0.1) {
+        hints.push('skew');
+        break;
+      }
+    }
   }
   
+  // Check quality score
   const qualityScore = page.quality?.qualityScore || 1;
-  if (qualityScore < 0.5) hints.push('blur');
-  if (qualityScore < 0.3) hints.push('shadow');
   
-  return hints;
+  if (qualityScore < 0.5) {
+    hints.push('blur');
+  }
+  if (qualityScore < 0.3) {
+    hints.push('shadow');
+  }
+  
+  // Check for defects
+  if (page.quality?.defects) {
+    for (const defect of page.quality.defects) {
+      if (defect.type && !hints.includes(defect.type)) {
+        hints.push(defect.type);
+      }
+    }
+  }
+  
+  return [...new Set(hints)]; // Remove duplicates
 }
 
-function extractTables(page: any, pageIndex: number): TableData[] {
-  if (!page.tables) return [];
+function extractTables(document: any, page: any, pageIndex: number): TableData[] {
+  if (!page.tables || page.tables.length === 0) return [];
   
   return page.tables.map((table: any, idx: number) => {
     const rows: string[][] = [];
     
+    const extractCellText = (cell: any): string => {
+      if (!cell?.layout?.textAnchor?.textSegments) return '';
+      
+      return cell.layout.textAnchor.textSegments
+        .map((segment: any) => {
+          const start = parseInt(segment.startIndex || '0');
+          const end = parseInt(segment.endIndex || '0');
+          return document.text?.substring(start, end) || '';
+        })
+        .join('')
+        .trim();
+    };
+    
+    // Extract header rows
     if (table.headerRows) {
-      table.headerRows.forEach((row: any) => {
-        const cells = row.cells?.map((cell: any) => cell.layout?.textAnchor?.content || '') || [];
-        rows.push(cells);
-      });
+      for (const row of table.headerRows) {
+        const cells = (row.cells || []).map(extractCellText);
+        if (cells.some(c => c)) rows.push(cells);
+      }
     }
     
+    // Extract body rows
     if (table.bodyRows) {
-      table.bodyRows.forEach((row: any) => {
-        const cells = row.cells?.map((cell: any) => cell.layout?.textAnchor?.content || '') || [];
-        rows.push(cells);
-      });
+      for (const row of table.bodyRows) {
+        const cells = (row.cells || []).map(extractCellText);
+        if (cells.some(c => c)) rows.push(cells);
+      }
     }
     
     return {
       name: `table_${pageIndex + 1}_${idx + 1}`,
-      confidence: table.detectionConfidence ? table.detectionConfidence * 100 : 85,
+      confidence: table.detectionConfidence ? Math.round(table.detectionConfidence * 100) : 85,
       rows,
     };
-  });
+  }).filter(table => table.rows.length > 0);
 }
 
 function extractEntities(document: any, pageIndex: number): Entity[] {
@@ -478,28 +679,30 @@ function extractEntities(document: any, pageIndex: number): Entity[] {
     .map((entity: any) => ({
       field: entity.type || 'unknown',
       value: entity.mentionText || '',
-      confidence: entity.confidence ? entity.confidence * 100 : 0,
-    }));
+      confidence: entity.confidence ? Math.round(entity.confidence * 100) : 0,
+    }))
+    .filter((e: Entity) => e.value.trim() !== '');
 }
 
 function generateCSV(pageResults: PageResult[]): string {
-  const rows: string[][] = [['Page', 'Table', 'Row', ...Array(20).fill('').map((_, i) => `Col${i + 1}`)]];
+  const allRows: string[][] = [['Page', 'Table', 'Row', ...Array.from({ length: 20 }, (_, i) => `Col${i + 1}`)]];
   
-  pageResults.forEach(page => {
-    page.tables.forEach(table => {
-      table.rows.forEach((row, rowIdx) => {
+  for (const page of pageResults) {
+    for (const table of page.tables) {
+      for (let rowIdx = 0; rowIdx < table.rows.length; rowIdx++) {
+        const row = table.rows[rowIdx];
         const csvRow = [
           page.page.toString(),
           table.name,
           (rowIdx + 1).toString(),
           ...row.map(cell => `"${cell.replace(/"/g, '""')}"`),
         ];
-        rows.push(csvRow);
-      });
-    });
-  });
+        allRows.push(csvRow);
+      }
+    }
+  }
   
-  return rows.map(row => row.join(',')).join('\n');
+  return allRows.map(row => row.join(',')).join('\n');
 }
 
 async function createJWT(credentials: any): Promise<string> {
@@ -531,13 +734,13 @@ function base64UrlEncode(str: string): string {
 }
 
 async function signWithRSA(data: string, privateKey: string): Promise<string> {
-  // Replace literal \n with actual newlines and clean up the key
+  // Clean up the private key
   const cleanKey = privateKey.replace(/\\n/g, '\n');
   
   const pemHeader = '-----BEGIN PRIVATE KEY-----';
   const pemFooter = '-----END PRIVATE KEY-----';
   
-  // Extract just the base64 content between headers
+  // Extract base64 content
   const pemContents = cleanKey
     .replace(pemHeader, '')
     .replace(pemFooter, '')
