@@ -12,6 +12,13 @@ dist
 dist-ssr
 *.local
 
+# Google Cloud credentials
+*.json
+!package.json
+!package-lock.json
+!tsconfig*.json
+!components.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

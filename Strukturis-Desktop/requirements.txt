@@ -1,0 +1,9 @@
+PySide6
+opencv-python-headless
+pytesseract
+pandas
+openpyxl
+PyMuPDF
+numpy
+darkdetect
+qtawesome
