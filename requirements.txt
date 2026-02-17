@@ -7,3 +7,5 @@ PyMuPDF
 numpy
 darkdetect
 qtawesome
+pdfplumber
+reportlab
